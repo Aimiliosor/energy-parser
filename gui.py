@@ -1384,10 +1384,11 @@ class EnergyParserGUI:
                 freq = pd.Timedelta(hours=self.hours_per_interval)
                 value_cols = [c for c in df.columns if c != "Date & Time"]
                 new_rows = []
+                max_fill_rows = len(df) * 2  # Safety cap: don't create more rows than 2x original
 
                 for gap in gaps:
                     current = gap["from"] + freq
-                    while current < gap["to"]:
+                    while current < gap["to"] and len(new_rows) < max_fill_rows:
                         row = {"Date & Time": current}
                         for col in value_cols:
                             row[col] = float("nan")
@@ -1471,8 +1472,9 @@ class EnergyParserGUI:
                            "Ready to export.")
 
         except Exception as e:
+            import traceback
             self.update_progress(0, "Error applying corrections")
-            messagebox.showerror("Error", f"Failed to apply corrections:\n{str(e)}")
+            messagebox.showerror("Error", f"Failed to apply corrections:\n{str(e)}\n\n{traceback.format_exc()}")
 
     def export_data(self):
         """Export transformed data to Excel."""
