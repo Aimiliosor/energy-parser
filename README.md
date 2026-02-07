@@ -1,6 +1,6 @@
-# Energy Parser
+# Spartacus
 
-Interactive CLI tool that ingests energy CSV/XLSX files, standardizes them, runs quality checks, and outputs clean XLSX files.
+ReVolta energy analysis tool. Interactive CLI and GUI that ingests energy CSV/XLSX files, standardizes them, runs quality checks, and outputs clean XLSX files.
 
 ## Features
 

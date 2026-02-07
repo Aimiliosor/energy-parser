@@ -1,6 +1,6 @@
-"""Energy Parser - Modern GUI Application.
+"""Spartacus - ReVolta Energy Analysis Tool.
 
-A graphical interface for the Energy Parser tool.
+A graphical interface for the Spartacus energy analysis tool.
 Property of ReVolta srl. All rights reserved.
 """
 
@@ -36,7 +36,11 @@ from energy_parser.corrector import (
 from energy_parser.exporter import save_xlsx
 from energy_parser.data_validator import run_validation
 from energy_parser.statistics import run_statistical_analysis
-from energy_parser.report_generator import generate_pdf_report, generate_seasonal_chart
+from energy_parser.report_generator import (
+    generate_pdf_report, generate_seasonal_chart,
+    generate_peak_timeline_chart, generate_peak_heatmap,
+    generate_peak_duration_chart, generate_peak_value_trend_chart,
+)
 
 
 # Color Palette
@@ -157,11 +161,11 @@ class ModernButton(tk.Canvas):
 
 
 class EnergyParserGUI:
-    """Main GUI Application for Energy Parser."""
+    """Main GUI Application for Spartacus."""
 
     def __init__(self, root):
         self.root = root
-        self.root.title("ReVolta Energy Parser")
+        self.root.title("Spartacus - ReVolta Energy Analysis Tool")
         self.root.geometry("1200x800")
         self.root.minsize(1000, 700)
         self.root.configure(bg=COLORS["bg"])
@@ -253,21 +257,17 @@ class EnergyParserGUI:
         self._last_width = width
         self._last_height = height
 
-        # Update background image
-        self.update_background()
-
         # Update logo
         self.update_logo()
 
     def update_background(self):
-        """Update background image to fit window."""
-        if not self.bg_image_original or not hasattr(self, 'bg_label'):
+        """Update background image on the content canvas."""
+        if not self.bg_image_original or not hasattr(self, 'content_canvas'):
             return
 
         try:
-            # Get current window size
-            width = self.root.winfo_width()
-            height = self.root.winfo_height()
+            width = self.content_canvas.winfo_width()
+            height = self.content_canvas.winfo_height()
 
             if width < 100 or height < 100:
                 return
@@ -275,14 +275,12 @@ class EnergyParserGUI:
             # Create resized image maintaining aspect ratio, centered
             img = self.bg_image_original.copy()
             img_ratio = img.width / img.height
-            win_ratio = width / height
+            canvas_ratio = width / height
 
-            if img_ratio > win_ratio:
-                # Image is wider - fit to height
+            if img_ratio > canvas_ratio:
                 new_height = height
                 new_width = int(height * img_ratio)
             else:
-                # Image is taller - fit to width
                 new_width = width
                 new_height = int(width / img_ratio)
 
@@ -293,14 +291,15 @@ class EnergyParserGUI:
             top = (new_height - height) // 2
             img = img.crop((left, top, left + width, top + height))
 
-            # Add semi-transparent overlay for readability
-            overlay = Image.new('RGBA', (width, height), (245, 247, 250, 150))
+            # Semi-transparent overlay (~37% image visibility)
+            overlay = Image.new('RGBA', (width, height), (245, 247, 250, 160))
             img = img.convert('RGBA')
             img = Image.alpha_composite(img, overlay)
 
-            self.bg_photo = ImageTk.PhotoImage(img)
-            self.bg_label.configure(image=self.bg_photo)
-        except Exception as e:
+            self._canvas_bg_photo = ImageTk.PhotoImage(img)
+            self.content_canvas.itemconfig("bg", image=self._canvas_bg_photo)
+            self._reposition_bg()
+        except Exception:
             pass
 
     def update_logo(self):
@@ -382,39 +381,43 @@ class EnergyParserGUI:
 
     def create_widgets(self):
         """Create all GUI widgets."""
-        # Background image label (behind everything)
-        self.bg_label = tk.Label(self.root)
-        self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+        # Header (packed at top, opaque branded bar)
+        self.create_header(self.root)
 
-        # Main container (on top of background)
-        main_container = tk.Frame(self.root, bg="")
-        main_container.place(x=0, y=0, relwidth=1, relheight=1)
+        # Footer (packed at bottom first so it stays below content)
+        self.create_footer(self.root)
 
-        # Make main_container transparent by not setting bg
-        main_container.configure(bg=COLORS["bg"])
+        # Content area: canvas with background image + scrollable content
+        canvas_container = tk.Frame(self.root, bg=COLORS["bg"])
+        canvas_container.pack(fill=tk.BOTH, expand=True)
 
-        # Header
-        self.create_header(main_container)
+        self.content_canvas = tk.Canvas(canvas_container, highlightthickness=0,
+                                         bg=COLORS["bg"])
+        scrollbar = ttk.Scrollbar(canvas_container, orient="vertical",
+                                   command=self._on_scroll)
+        self.content_canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Content area with scrolling
-        content_canvas = tk.Canvas(main_container, bg=COLORS["bg"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(main_container, orient="vertical", command=content_canvas.yview)
-        self.content_frame = ttk.Frame(content_canvas, style="Main.TFrame")
+        self.content_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Background image item on canvas (stays at viewport origin)
+        self._canvas_bg_photo = None
+        self.content_canvas.create_image(0, 0, anchor="nw", tags="bg")
+
+        # Scrollable content frame (placed as a window on the canvas)
+        self.content_frame = tk.Frame(self.content_canvas, bg=COLORS["bg"])
+        self._content_window_id = self.content_canvas.create_window(
+            (20, 10), window=self.content_frame, anchor="nw", tags="content")
 
         self.content_frame.bind(
             "<Configure>",
-            lambda e: content_canvas.configure(scrollregion=content_canvas.bbox("all"))
+            lambda e: self.content_canvas.configure(
+                scrollregion=self.content_canvas.bbox("all"))
         )
-
-        content_canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
-        content_canvas.configure(yscrollcommand=scrollbar.set)
-
-        content_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=10)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.content_canvas.bind("<Configure>", self._on_canvas_configure)
 
         # Bind mousewheel
-        content_canvas.bind_all("<MouseWheel>",
-            lambda e: content_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        self.content_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
         # Create sections
         self.create_file_section()
@@ -426,11 +429,32 @@ class EnergyParserGUI:
         self.create_statistics_section()
         self.create_tools_section()
 
-        # Footer
-        self.create_footer(main_container)
-
         # Initial background update
         self.root.after(100, self.update_background)
+
+    def _on_scroll(self, *args):
+        """Handle scrollbar movement — scroll content and reposition bg."""
+        self.content_canvas.yview(*args)
+        self._reposition_bg()
+
+    def _on_mousewheel(self, event):
+        """Handle mousewheel — scroll content and reposition bg."""
+        self.content_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self._reposition_bg()
+
+    def _reposition_bg(self):
+        """Keep background image fixed at the viewport origin."""
+        x = self.content_canvas.canvasx(0)
+        y = self.content_canvas.canvasy(0)
+        self.content_canvas.coords("bg", x, y)
+        self.content_canvas.tag_lower("bg")
+
+    def _on_canvas_configure(self, event):
+        """Update content frame width to fill canvas and refresh background."""
+        canvas_width = event.width
+        self.content_canvas.itemconfig(
+            self._content_window_id, width=max(1, canvas_width - 40))
+        self.update_background()
 
     def create_header(self, parent):
         """Create the header with logo and title."""
@@ -467,7 +491,7 @@ class EnergyParserGUI:
         center_frame = tk.Frame(header_frame, bg=COLORS["primary"])
         center_frame.pack(side=tk.LEFT, expand=True, fill=tk.X)
 
-        title_label = tk.Label(center_frame, text="Energy Parser",
+        title_label = tk.Label(center_frame, text="Spartacus",
                               font=("Segoe UI", 18, "bold"),
                               bg=COLORS["primary"], fg=COLORS["white"])
         title_label.pack(pady=5)
@@ -964,6 +988,7 @@ class EnergyParserGUI:
             "monthly_totals": tk.BooleanVar(value=True),
             "daily_avg_kwh": tk.BooleanVar(value=True),
             "seasonal_profile": tk.BooleanVar(value=True),
+            "peak_analysis": tk.BooleanVar(value=True),
         }
 
         checkbox_labels = {
@@ -976,6 +1001,7 @@ class EnergyParserGUI:
             "monthly_totals": "Monthly Totals",
             "daily_avg_kwh": "Daily Average (kWh)",
             "seasonal_profile": "Seasonal Weekly Profile",
+            "peak_analysis": "Peak Consumption Analysis",
         }
 
         keys = list(checkbox_labels.keys())
@@ -1110,6 +1136,59 @@ class EnergyParserGUI:
                         self.stats_text.insert(tk.END,
                             f"    {month_names[m-1]}: {val:>10,.2f}\n")
 
+            # Peak analysis text display
+            if "peak_analysis" in selected:
+                peaks = self.stats_result.get("peaks", {})
+                for col_name, peak_data in peaks.items():
+                    self.stats_text.insert(tk.END,
+                        f"\nPeak Consumption Analysis — {col_name}\n", "header")
+                    self.stats_text.insert(tk.END, "=" * 50 + "\n")
+
+                    top_peaks = peak_data.get("top_peaks", [])
+                    if not top_peaks:
+                        self.stats_text.insert(tk.END,
+                            "  No significant peaks detected.\n")
+                        continue
+
+                    self.stats_text.insert(tk.END, "\n  Top Peaks:\n", "metric")
+                    for p in top_peaks:
+                        self.stats_text.insert(tk.END,
+                            f"    #{p['rank']}  {p['value']:>8,.1f} kW  "
+                            f"{p['timestamp']}  {p['day_of_week']:<9s}  "
+                            f"Duration: {p['duration_hours']:.1f}h\n")
+
+                    chars = peak_data.get("characteristics", {})
+                    thresholds = peak_data.get("thresholds", {})
+                    patterns = peak_data.get("patterns", {})
+                    clustering = chars.get("clustering", {})
+
+                    self.stats_text.insert(tk.END,
+                        "\n  Characteristics:\n", "metric")
+                    self.stats_text.insert(tk.END,
+                        f"    Peaks detected:      {patterns.get('total_peaks_detected', 0)}\n"
+                        f"    Avg duration:         {chars.get('avg_duration_hours', 0):.1f} hours\n"
+                        f"    Avg rise rate:        {chars.get('avg_rise_rate', 0):,.1f} kW/hour\n"
+                        f"    Avg fall rate:        {chars.get('avg_fall_rate', 0):,.1f} kW/hour\n"
+                        f"    Clustered peaks:      {clustering.get('clustered_count', 0)}\n"
+                        f"    Isolated peaks:       {clustering.get('isolated_count', 0)}\n")
+
+                    self.stats_text.insert(tk.END,
+                        "\n  Threshold Analysis:\n", "metric")
+                    self.stats_text.insert(tk.END,
+                        f"    90th percentile:      {thresholds.get('p90_value', 0):,.2f} kW\n"
+                        f"    95th percentile:      {thresholds.get('p95_value', 0):,.2f} kW\n"
+                        f"    Time above 90th pct:  {thresholds.get('time_above_p90_hours', 0):,.1f} hours\n"
+                        f"    Time above 95th pct:  {thresholds.get('time_above_p95_hours', 0):,.1f} hours\n"
+                        f"    Peak-to-avg ratio:    {thresholds.get('peak_to_avg_ratio', 0):.2f}x\n")
+
+                    freq = patterns.get("peak_frequency", {})
+                    self.stats_text.insert(tk.END,
+                        "\n  Peak Frequency:\n", "metric")
+                    self.stats_text.insert(tk.END,
+                        f"    Readings above 90th:  {freq.get('above_90th', 0)}\n"
+                        f"    Readings above 95th:  {freq.get('above_95th', 0)}\n"
+                        f"    Readings above 99th:  {freq.get('above_99th', 0)}\n")
+
             self.stats_text.config(state=tk.DISABLED)
 
             self.update_progress(80, "Rendering charts...")
@@ -1133,6 +1212,43 @@ class EnergyParserGUI:
                         # Convert to tkinter-displayable image
                         img = Image.open(io.BytesIO(chart_bytes))
                         # Scale down for display
+                        display_width = 750
+                        ratio = display_width / img.width
+                        display_height = int(img.height * ratio)
+                        img = img.resize((display_width, display_height),
+                                          Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        self._chart_images.append(photo)
+
+                        label = tk.Label(self.chart_frame, image=photo,
+                                          bg=COLORS["white"])
+                        label.pack(pady=3)
+
+            # Render peak charts if selected
+            if "peak_analysis" in selected:
+                peaks = self.stats_result.get("peaks", {})
+                for col_name, peak_data in peaks.items():
+                    if not peak_data.get("top_peaks"):
+                        continue
+
+                    chart_generators = [
+                        lambda: generate_peak_value_trend_chart(
+                            peak_data["top_peaks"], col_name),
+                        lambda: generate_peak_timeline_chart(
+                            peak_data.get("peak_timeline", []), col_name),
+                        lambda: generate_peak_duration_chart(
+                            peak_data["top_peaks"], col_name),
+                        lambda: generate_peak_heatmap(
+                            peak_data.get("patterns", {}).get(
+                                "hourly_distribution", {}),
+                            peak_data.get("patterns", {}).get(
+                                "daily_distribution", {}),
+                            col_name),
+                    ]
+
+                    for gen in chart_generators:
+                        chart_bytes = gen()
+                        img = Image.open(io.BytesIO(chart_bytes))
                         display_width = 750
                         ratio = display_width / img.width
                         display_height = int(img.height * ratio)
@@ -1216,7 +1332,7 @@ class EnergyParserGUI:
                               bg=COLORS["text_dark"], width=180)
         cli_btn.pack(side=tk.LEFT, padx=5)
 
-        tk.Label(tools_row, text="Run the CLI version of Energy Parser",
+        tk.Label(tools_row, text="Run the CLI version of Spartacus",
                 font=("Segoe UI", 9), bg=COLORS["white"],
                 fg=COLORS["light_gray"]).pack(side=tk.LEFT, padx=10)
 
@@ -1237,7 +1353,7 @@ class EnergyParserGUI:
         footer.pack_propagate(False)
 
         footer_text = tk.Label(footer,
-                              text="Energy Parser v1.0 | ReVolta srl | www.revolta.energy",
+                              text="Spartacus v1.0 | ReVolta srl | www.revolta.energy",
                               font=("Segoe UI", 8),
                               bg=COLORS["primary"], fg=COLORS["light_gray"])
         footer_text.pack(pady=7)

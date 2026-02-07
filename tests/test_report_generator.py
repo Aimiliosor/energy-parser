@@ -10,12 +10,17 @@ import pytest
 from energy_parser.statistics import (
     compute_yearly_stats,
     compute_seasonal_weekly_profile,
+    compute_peak_analysis,
     run_statistical_analysis,
     DAY_ORDER,
 )
 from energy_parser.report_generator import (
     generate_seasonal_chart,
     generate_monthly_bar_chart,
+    generate_peak_timeline_chart,
+    generate_peak_heatmap,
+    generate_peak_duration_chart,
+    generate_peak_value_trend_chart,
     generate_pdf_report,
 )
 
@@ -176,3 +181,135 @@ class TestGeneratePdfReport:
         output = str(tmp_path / "report.pdf")
         result = generate_pdf_report(output, stats_result)
         assert result == output
+
+    def test_with_peak_analysis(self, tmp_path):
+        stats_result, df = _make_stats_result()
+        output = str(tmp_path / "report_peaks.pdf")
+        result = generate_pdf_report(output, stats_result)
+        assert os.path.isfile(result)
+        assert os.path.getsize(result) > 5000
+
+
+# ---------------------------------------------------------------------------
+# TestGeneratePeakTimelineChart
+# ---------------------------------------------------------------------------
+
+class TestGeneratePeakTimelineChart:
+    def _make_peak_timeline(self):
+        df = _make_yearly_df(days=90)
+        peaks = compute_peak_analysis(df, hours_per_interval=1.0)
+        return peaks["Consumption (kW)"]["peak_timeline"]
+
+    def test_returns_bytes(self):
+        timeline = self._make_peak_timeline()
+        result = generate_peak_timeline_chart(timeline, "Consumption (kW)")
+        assert isinstance(result, bytes)
+
+    def test_png_header(self):
+        timeline = self._make_peak_timeline()
+        result = generate_peak_timeline_chart(timeline, "Consumption (kW)")
+        assert result[:4] == b"\x89PNG"
+
+    def test_non_empty(self):
+        timeline = self._make_peak_timeline()
+        result = generate_peak_timeline_chart(timeline, "Consumption (kW)")
+        assert len(result) > 1000
+
+    def test_empty_timeline(self):
+        result = generate_peak_timeline_chart([], "Consumption (kW)")
+        assert isinstance(result, bytes)
+        assert len(result) > 100
+
+
+# ---------------------------------------------------------------------------
+# TestGeneratePeakHeatmap
+# ---------------------------------------------------------------------------
+
+class TestGeneratePeakHeatmap:
+    def _make_distributions(self):
+        df = _make_yearly_df(days=90)
+        peaks = compute_peak_analysis(df, hours_per_interval=1.0)
+        patterns = peaks["Consumption (kW)"]["patterns"]
+        return patterns["hourly_distribution"], patterns["daily_distribution"]
+
+    def test_returns_bytes(self):
+        hourly, daily = self._make_distributions()
+        result = generate_peak_heatmap(hourly, daily, "Consumption (kW)")
+        assert isinstance(result, bytes)
+
+    def test_png_header(self):
+        hourly, daily = self._make_distributions()
+        result = generate_peak_heatmap(hourly, daily, "Consumption (kW)")
+        assert result[:4] == b"\x89PNG"
+
+    def test_non_empty(self):
+        hourly, daily = self._make_distributions()
+        result = generate_peak_heatmap(hourly, daily, "Consumption (kW)")
+        assert len(result) > 1000
+
+    def test_empty_distributions(self):
+        hourly = {h: 0 for h in range(24)}
+        daily = {d: 0 for d in ["Monday", "Tuesday", "Wednesday",
+                                 "Thursday", "Friday", "Saturday", "Sunday"]}
+        result = generate_peak_heatmap(hourly, daily, "Consumption (kW)")
+        assert isinstance(result, bytes)
+
+
+# ---------------------------------------------------------------------------
+# TestGeneratePeakDurationChart
+# ---------------------------------------------------------------------------
+
+class TestGeneratePeakDurationChart:
+    def _make_top_peaks(self):
+        df = _make_yearly_df(days=90)
+        peaks = compute_peak_analysis(df, hours_per_interval=1.0, top_n=5)
+        return peaks["Consumption (kW)"]["top_peaks"]
+
+    def test_returns_bytes(self):
+        top_peaks = self._make_top_peaks()
+        result = generate_peak_duration_chart(top_peaks, "Consumption (kW)")
+        assert isinstance(result, bytes)
+
+    def test_png_header(self):
+        top_peaks = self._make_top_peaks()
+        result = generate_peak_duration_chart(top_peaks, "Consumption (kW)")
+        assert result[:4] == b"\x89PNG"
+
+    def test_non_empty(self):
+        top_peaks = self._make_top_peaks()
+        result = generate_peak_duration_chart(top_peaks, "Consumption (kW)")
+        assert len(result) > 1000
+
+    def test_empty_peaks(self):
+        result = generate_peak_duration_chart([], "Consumption (kW)")
+        assert isinstance(result, bytes)
+
+
+# ---------------------------------------------------------------------------
+# TestGeneratePeakValueTrendChart
+# ---------------------------------------------------------------------------
+
+class TestGeneratePeakValueTrendChart:
+    def _make_top_peaks(self):
+        df = _make_yearly_df(days=90)
+        peaks = compute_peak_analysis(df, hours_per_interval=1.0, top_n=5)
+        return peaks["Consumption (kW)"]["top_peaks"]
+
+    def test_returns_bytes(self):
+        top_peaks = self._make_top_peaks()
+        result = generate_peak_value_trend_chart(top_peaks, "Consumption (kW)")
+        assert isinstance(result, bytes)
+
+    def test_png_header(self):
+        top_peaks = self._make_top_peaks()
+        result = generate_peak_value_trend_chart(top_peaks, "Consumption (kW)")
+        assert result[:4] == b"\x89PNG"
+
+    def test_non_empty(self):
+        top_peaks = self._make_top_peaks()
+        result = generate_peak_value_trend_chart(top_peaks, "Consumption (kW)")
+        assert len(result) > 1000
+
+    def test_empty_peaks(self):
+        result = generate_peak_value_trend_chart([], "Consumption (kW)")
+        assert isinstance(result, bytes)

@@ -67,8 +67,8 @@ def prompt_granularity_selection(detected_info: dict | None = None) -> tuple[str
 def prompt_file_path() -> str:
     """Prompt user for file path."""
     console.print(Panel(
-        "[bold]Energy Parser[/bold]\n"
-        "Ingests energy CSV/XLSX files, standardizes, quality-checks, and outputs clean XLSX.",
+        "[bold]Spartacus[/bold]\n"
+        "ReVolta energy analysis tool. Ingests CSV/XLSX files, standardizes, quality-checks, and outputs clean XLSX.",
         title="Welcome",
         border_style="cyan",
     ))

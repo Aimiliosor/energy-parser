@@ -7,6 +7,7 @@ import pytest
 from energy_parser.statistics import (
     compute_yearly_stats,
     compute_seasonal_weekly_profile,
+    compute_peak_analysis,
     run_statistical_analysis,
     SEASON_MAP,
     DAY_ORDER,
@@ -250,3 +251,189 @@ class TestRunStatisticalAnalysis:
                            "Consumption (kW)": pd.Series(dtype=float)})
         result = run_statistical_analysis(df, hours_per_interval=1.0)
         assert result["yearly"]["Consumption (kW)"]["total_kwh"] == 0.0
+
+    def test_peak_analysis_included_when_selected(self):
+        df = _make_yearly_df(days=365, freq="1h")
+        result = run_statistical_analysis(
+            df, hours_per_interval=1.0,
+            selected_metrics=["peak_analysis"])
+        assert "Consumption (kW)" in result["peaks"]
+
+    def test_peak_analysis_excluded_when_not_selected(self):
+        df = _make_yearly_df(days=365, freq="1h")
+        result = run_statistical_analysis(
+            df, hours_per_interval=1.0,
+            selected_metrics=["total_kwh"])
+        assert result["peaks"] == {}
+
+    def test_peak_analysis_in_all_metric_keys(self):
+        assert "peak_analysis" in ALL_METRIC_KEYS
+
+
+# ---------------------------------------------------------------------------
+# TestComputePeakAnalysis
+# ---------------------------------------------------------------------------
+
+class TestComputePeakAnalysis:
+    def test_returns_top_peaks(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0, top_n=5)
+        peaks = result["Consumption (kW)"]["top_peaks"]
+        assert len(peaks) <= 5
+        assert len(peaks) > 0
+
+    def test_top_peaks_sorted_by_value(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0, top_n=5)
+        peaks = result["Consumption (kW)"]["top_peaks"]
+        values = [p["value"] for p in peaks]
+        assert values == sorted(values, reverse=True)
+
+    def test_top_peak_fields(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        peak = result["Consumption (kW)"]["top_peaks"][0]
+        expected_keys = {"rank", "value", "timestamp", "day_of_week",
+                         "month", "duration_hours", "rise_rate", "fall_rate"}
+        assert expected_keys == set(peak.keys())
+
+    def test_rank_starts_at_one(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0, top_n=3)
+        peaks = result["Consumption (kW)"]["top_peaks"]
+        ranks = [p["rank"] for p in peaks]
+        assert ranks == [1, 2, 3]
+
+    def test_patterns_hourly_distribution(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        hourly = result["Consumption (kW)"]["patterns"]["hourly_distribution"]
+        assert len(hourly) == 24
+        assert all(h in hourly for h in range(24))
+        assert all(v >= 0 for v in hourly.values())
+
+    def test_patterns_daily_distribution(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        daily = result["Consumption (kW)"]["patterns"]["daily_distribution"]
+        assert len(daily) == 7
+        assert all(d in daily for d in DAY_ORDER)
+
+    def test_patterns_monthly_distribution(self):
+        df = _make_yearly_df(days=365, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        monthly = result["Consumption (kW)"]["patterns"]["monthly_distribution"]
+        assert len(monthly) == 12
+        assert all(m in monthly for m in range(1, 13))
+
+    def test_peak_frequency(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        freq = result["Consumption (kW)"]["patterns"]["peak_frequency"]
+        assert freq["above_90th"] >= freq["above_95th"] >= freq["above_99th"]
+        assert freq["above_90th"] > 0
+
+    def test_total_peaks_detected(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        total = result["Consumption (kW)"]["patterns"]["total_peaks_detected"]
+        assert total > 0
+
+    def test_characteristics_keys(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        chars = result["Consumption (kW)"]["characteristics"]
+        assert "avg_duration_hours" in chars
+        assert "avg_rise_rate" in chars
+        assert "avg_fall_rate" in chars
+        assert "clustering" in chars
+
+    def test_duration_positive(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        chars = result["Consumption (kW)"]["characteristics"]
+        assert chars["avg_duration_hours"] > 0
+
+    def test_clustering_counts(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        clustering = result["Consumption (kW)"]["characteristics"]["clustering"]
+        total = clustering["clustered_count"] + clustering["isolated_count"]
+        detected = result["Consumption (kW)"]["patterns"]["total_peaks_detected"]
+        assert total == detected
+
+    def test_thresholds_keys(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        thresholds = result["Consumption (kW)"]["thresholds"]
+        assert "p90_value" in thresholds
+        assert "p95_value" in thresholds
+        assert "time_above_p90_hours" in thresholds
+        assert "time_above_p95_hours" in thresholds
+        assert "peak_to_avg_ratio" in thresholds
+
+    def test_p95_greater_than_p90(self):
+        df = _make_yearly_df(days=365, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        thresholds = result["Consumption (kW)"]["thresholds"]
+        assert thresholds["p95_value"] >= thresholds["p90_value"]
+
+    def test_peak_to_avg_ratio_above_one(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        ratio = result["Consumption (kW)"]["thresholds"]["peak_to_avg_ratio"]
+        assert ratio > 1.0
+
+    def test_time_above_p90_greater_than_p95(self):
+        df = _make_yearly_df(days=365, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        thresholds = result["Consumption (kW)"]["thresholds"]
+        assert thresholds["time_above_p90_hours"] >= thresholds["time_above_p95_hours"]
+
+    def test_peak_timeline(self):
+        df = _make_yearly_df(days=90, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        timeline = result["Consumption (kW)"]["peak_timeline"]
+        assert len(timeline) > 0
+        assert "timestamp" in timeline[0]
+        assert "value" in timeline[0]
+
+    def test_dual_column(self):
+        df = _make_yearly_df(days=90, freq="1h", with_production=True)
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        assert "Consumption (kW)" in result
+        assert "Production (kW)" in result
+
+    def test_empty_dataframe(self):
+        df = pd.DataFrame({"Date & Time": pd.Series(dtype="datetime64[ns]"),
+                           "Consumption (kW)": pd.Series(dtype=float)})
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        col = result["Consumption (kW)"]
+        assert col["top_peaks"] == []
+        assert col["patterns"]["total_peaks_detected"] == 0
+        assert col["thresholds"]["p90_value"] == 0.0
+
+    def test_very_short_series(self):
+        dates = pd.date_range("2024-01-01", periods=3, freq="1h")
+        df = pd.DataFrame({
+            "Date & Time": dates,
+            "Consumption (kW)": [5.0, 10.0, 5.0],
+        })
+        result = compute_peak_analysis(df, hours_per_interval=1.0)
+        col = result["Consumption (kW)"]
+        assert col["top_peaks"] == []
+        assert col["patterns"]["total_peaks_detected"] == 0
+
+    def test_custom_top_n(self):
+        df = _make_yearly_df(days=365, freq="1h")
+        result = compute_peak_analysis(df, hours_per_interval=1.0, top_n=3)
+        peaks = result["Consumption (kW)"]["top_peaks"]
+        assert len(peaks) <= 3
+
+    def test_fifteen_min_interval(self):
+        df = _make_yearly_df(days=30, freq="15min", consumption_base=20.0)
+        result = compute_peak_analysis(df, hours_per_interval=0.25)
+        chars = result["Consumption (kW)"]["characteristics"]
+        # Duration should be in 0.25h increments
+        for peak in result["Consumption (kW)"]["top_peaks"]:
+            assert peak["duration_hours"] >= 0.25

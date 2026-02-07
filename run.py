@@ -1,4 +1,4 @@
-"""Energy Parser - Entry point.
+"""Spartacus - Entry point.
 
 Usage:
     python run.py
