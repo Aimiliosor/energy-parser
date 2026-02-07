@@ -75,20 +75,29 @@ class ModernButton(tk.Canvas):
 
     def draw_button(self, hover=False):
         self.delete("all")
-        radius = 8
+        radius = 10
 
-        # Adjust color on hover
-        color = self.lighten_color(self.bg_color, 0.1) if hover else self.bg_color
         if not self.enabled:
-            color = COLORS["light_gray"]
+            # Disabled state: flat, no shadow
+            self.create_rounded_rect(2, 2, self.width-2, self.height-2, radius,
+                                    fill="#D0D5E0", outline="#B8BEC8")
+            self.create_text(self.width/2, self.height/2, text=self.text,
+                            fill="#888888", font=("Segoe UI", 10, "bold"))
+            return
 
-        # Draw rounded rectangle
-        self.create_rounded_rect(2, 2, self.width-2, self.height-2, radius, fill=color)
+        # Shadow (offset 2px down-right for depth)
+        self.create_rounded_rect(4, 4, self.width-1, self.height-1, radius,
+                                fill="#A0A8B8", outline="")
 
-        # Draw text
-        text_color = self.fg_color if self.enabled else "#666666"
+        # Button body
+        color = self.lighten_color(self.bg_color, 0.2) if hover else self.bg_color
+        border_color = self.darken_color(self.bg_color, 0.15)
+        self.create_rounded_rect(2, 2, self.width-3, self.height-3, radius,
+                                fill=color, outline=border_color)
+
+        # Text
         self.create_text(self.width/2, self.height/2, text=self.text,
-                        fill=text_color, font=("Segoe UI", 10, "bold"))
+                        fill=self.fg_color, font=("Segoe UI", 10, "bold"))
 
     def create_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
         points = [
@@ -116,11 +125,22 @@ class ModernButton(tk.Canvas):
         b = min(255, int(b + (255 - b) * factor))
         return f"#{r:02x}{g:02x}{b:02x}"
 
+    def darken_color(self, color, factor):
+        """Darken a hex color by a factor."""
+        color = color.lstrip("#")
+        r, g, b = int(color[:2], 16), int(color[2:4], 16), int(color[4:], 16)
+        r = max(0, int(r * (1 - factor)))
+        g = max(0, int(g * (1 - factor)))
+        b = max(0, int(b * (1 - factor)))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
     def on_hover(self, event):
         if self.enabled:
+            self.config(cursor="hand2")
             self.draw_button(hover=True)
 
     def on_leave(self, event):
+        self.config(cursor="")
         self.draw_button(hover=False)
 
     def on_click(self, event):
@@ -268,7 +288,7 @@ class EnergyParserGUI:
             img = img.crop((left, top, left + width, top + height))
 
             # Add semi-transparent overlay for readability
-            overlay = Image.new('RGBA', (width, height), (245, 247, 250, 200))
+            overlay = Image.new('RGBA', (width, height), (245, 247, 250, 150))
             img = img.convert('RGBA')
             img = Image.alpha_composite(img, overlay)
 
@@ -490,12 +510,13 @@ class EnergyParserGUI:
 
         self.browse_btn = ModernButton(file_row, "Browse...",
                                        command=self.browse_file,
-                                       bg=COLORS["secondary"], width=120)
+                                       bg=COLORS["light_gray"],
+                                       fg=COLORS["primary"], width=120)
         self.browse_btn.pack(side=tk.LEFT)
 
         self.load_btn = ModernButton(file_row, "Load File",
                                     command=self.load_file,
-                                    bg=COLORS["primary"], width=120)
+                                    bg=COLORS["secondary"], width=120)
         self.load_btn.pack(side=tk.LEFT, padx=10)
 
         # File info
@@ -593,13 +614,13 @@ class EnergyParserGUI:
 
         self.transform_btn = ModernButton(btn_row, "Transform Data",
                                           command=self.transform_data,
-                                          bg=COLORS["primary"], width=150)
+                                          bg=COLORS["secondary"], width=150)
         self.transform_btn.pack(side=tk.LEFT, padx=5)
         self.transform_btn.set_enabled(False)
 
         self.quality_btn = ModernButton(btn_row, "Quality Check",
                                         command=self.run_quality_check,
-                                        bg=COLORS["primary"], width=150)
+                                        bg=COLORS["secondary"], width=150)
         self.quality_btn.pack(side=tk.LEFT, padx=5)
         self.quality_btn.set_enabled(False)
 
@@ -1478,7 +1499,7 @@ class GranularityDialog(tk.Toplevel):
 
         confirm_btn = ModernButton(btn_frame, "Confirm",
                                    command=self.confirm,
-                                   bg=COLORS["primary"], width=120, height=38)
+                                   bg=COLORS["secondary"], width=120, height=38)
         confirm_btn.pack(side=tk.RIGHT, padx=5)
 
         # If we have detection result, offer to use it
