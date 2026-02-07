@@ -6,7 +6,13 @@ from rich.prompt import Prompt, Confirm
 from rich.panel import Panel
 
 from energy_parser.file_reader import load_file, display_preview, clean_path
-from energy_parser.analyzer import analyze_columns, display_analysis, detect_granularity
+from energy_parser.analyzer import (
+    analyze_columns,
+    display_analysis,
+    detect_granularity,
+    detect_granularity_with_confidence,
+    STANDARD_GRANULARITIES,
+)
 from energy_parser.transformer import transform_data
 from energy_parser.quality_check import run_quality_check
 from energy_parser.corrector import run_corrections
@@ -15,6 +21,45 @@ from energy_parser.exporter import save_xlsx
 console = Console()
 
 VALID_UNITS = ["W", "kW", "Wh", "kWh", "MWh", "MW"]
+
+# Confidence threshold for automatic granularity acceptance
+GRANULARITY_CONFIDENCE_THRESHOLD = 0.7
+
+
+def prompt_granularity_selection(detected_info: dict | None = None) -> tuple[str, float]:
+    """Prompt user to select data granularity when auto-detection fails.
+
+    Args:
+        detected_info: Optional dict from detect_granularity_with_confidence
+
+    Returns:
+        (label, hours_per_interval)
+    """
+    console.print("\n[bold yellow]Granularity Detection[/bold yellow]")
+
+    if detected_info:
+        console.print(f"  Auto-detection result: {detected_info['label']}")
+        console.print(f"  Confidence: {detected_info['confidence']:.0%}")
+        console.print(f"  Consistency: {detected_info['consistency']:.0%}")
+        console.print("  [yellow]Confidence is too low for automatic selection.[/yellow]")
+    else:
+        console.print("  [yellow]Could not detect granularity automatically.[/yellow]")
+
+    console.print("\n  Please select the data granularity:")
+    for i, (label, minutes, _) in enumerate(STANDARD_GRANULARITIES):
+        console.print(f"    ({i + 1}) {label}")
+
+    while True:
+        choice = Prompt.ask("  Select granularity", choices=["1", "2", "3", "4"], default="2")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(STANDARD_GRANULARITIES):
+                label, minutes, hours = STANDARD_GRANULARITIES[idx]
+                console.print(f"  [green]Selected: {label}[/green]")
+                return label, hours
+        except ValueError:
+            pass
+        console.print("  [red]Invalid selection, please try again.[/red]")
 
 
 def prompt_file_path() -> str:
@@ -168,8 +213,22 @@ def run():
                 sample_dates = pd.to_datetime(
                     df.iloc[:, date_col_idx], format=date_fmt, errors="coerce"
                 )
-            granularity_label, hours_per_interval = detect_granularity(sample_dates)
-            console.print(f"  Detected granularity: [bold]{granularity_label}[/bold]")
+
+            # Use enhanced detection with confidence
+            detection_result = detect_granularity_with_confidence(sample_dates)
+
+            if detection_result["confidence"] >= GRANULARITY_CONFIDENCE_THRESHOLD:
+                # High confidence - auto-accept
+                granularity_label = detection_result["label"]
+                hours_per_interval = detection_result["hours_per_interval"]
+                console.print(f"  [green]Detected granularity: [bold]{granularity_label}[/bold] "
+                            f"(confidence: {detection_result['confidence']:.0%})[/green]")
+            else:
+                # Low confidence - prompt user
+                granularity_label, hours_per_interval = prompt_granularity_selection(detection_result)
+        else:
+            # No date column found - prompt user
+            granularity_label, hours_per_interval = prompt_granularity_selection(None)
 
         # ===== Phase 2: Column Identification =====
         selection = prompt_column_selection(df, analysis)

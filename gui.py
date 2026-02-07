@@ -19,7 +19,12 @@ from PIL import Image, ImageTk
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from energy_parser.file_reader import load_file, clean_path, detect_encoding, detect_delimiter
-from energy_parser.analyzer import analyze_columns, detect_granularity
+from energy_parser.analyzer import (
+    analyze_columns,
+    detect_granularity,
+    detect_granularity_with_confidence,
+    STANDARD_GRANULARITIES,
+)
 from energy_parser.transformer import transform_data
 from energy_parser.quality_check import run_quality_check
 from energy_parser.corrector import (
@@ -162,9 +167,140 @@ class EnergyParserGUI:
         self.cons_unit_var = tk.StringVar(value="kW")
         self.prod_unit_var = tk.StringVar(value="kW")
 
+        # Image references (keep references to prevent garbage collection)
+        self.bg_image_original = None
+        self.bg_photo = None
+        self.logo_image_original = None
+        self.logo_photo = None
+
+        # Load images
+        self.load_images()
+
         # Setup UI
         self.setup_styles()
         self.create_widgets()
+
+        # Bind resize event for responsive images
+        self.root.bind("<Configure>", self.on_resize)
+        self._last_width = 0
+        self._last_height = 0
+
+    def load_images(self):
+        """Load and store original images for responsive resizing."""
+        # Load background image
+        bg_path = os.path.join(os.path.dirname(__file__), "Energy storage.jpg")
+        if os.path.exists(bg_path):
+            try:
+                self.bg_image_original = Image.open(bg_path)
+            except:
+                pass
+
+        # Load logo - try white version first, then navy
+        logo_paths = [
+            os.path.join(os.path.dirname(__file__), "Logo_new_white.png"),
+            os.path.join(os.path.dirname(__file__), "logo white.png"),
+            os.path.join(os.path.dirname(__file__), "logo white.jpeg"),
+            os.path.join(os.path.dirname(__file__), "logo White.png"),
+            os.path.join(os.path.dirname(__file__), "logo Navy.jpeg"),
+        ]
+        for logo_path in logo_paths:
+            if os.path.exists(logo_path):
+                try:
+                    self.logo_image_original = Image.open(logo_path)
+                    break
+                except:
+                    continue
+
+    def on_resize(self, event):
+        """Handle window resize for responsive images."""
+        # Only respond to root window resizes, not child widgets
+        if event.widget != self.root:
+            return
+
+        # Debounce - only update if size changed significantly
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+
+        if abs(width - self._last_width) < 50 and abs(height - self._last_height) < 50:
+            return
+
+        self._last_width = width
+        self._last_height = height
+
+        # Update background image
+        self.update_background()
+
+        # Update logo
+        self.update_logo()
+
+    def update_background(self):
+        """Update background image to fit window."""
+        if not self.bg_image_original or not hasattr(self, 'bg_label'):
+            return
+
+        try:
+            # Get current window size
+            width = self.root.winfo_width()
+            height = self.root.winfo_height()
+
+            if width < 100 or height < 100:
+                return
+
+            # Create resized image maintaining aspect ratio, centered
+            img = self.bg_image_original.copy()
+            img_ratio = img.width / img.height
+            win_ratio = width / height
+
+            if img_ratio > win_ratio:
+                # Image is wider - fit to height
+                new_height = height
+                new_width = int(height * img_ratio)
+            else:
+                # Image is taller - fit to width
+                new_width = width
+                new_height = int(width / img_ratio)
+
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+            # Crop to center
+            left = (new_width - width) // 2
+            top = (new_height - height) // 2
+            img = img.crop((left, top, left + width, top + height))
+
+            # Add semi-transparent overlay for readability
+            overlay = Image.new('RGBA', (width, height), (245, 247, 250, 200))
+            img = img.convert('RGBA')
+            img = Image.alpha_composite(img, overlay)
+
+            self.bg_photo = ImageTk.PhotoImage(img)
+            self.bg_label.configure(image=self.bg_photo)
+        except Exception as e:
+            pass
+
+    def update_logo(self):
+        """Update logo size based on header height."""
+        if not self.logo_image_original or not hasattr(self, 'logo_label'):
+            return
+
+        try:
+            # Calculate logo size based on header (proportional)
+            header_height = 80
+            logo_height = int(header_height * 0.6)
+            logo_width = int(logo_height * (self.logo_image_original.width / self.logo_image_original.height))
+
+            # Limit max width
+            max_width = int(self.root.winfo_width() * 0.15)
+            if logo_width > max_width:
+                logo_width = max_width
+                logo_height = int(logo_width * (self.logo_image_original.height / self.logo_image_original.width))
+
+            img = self.logo_image_original.copy()
+            img = img.resize((logo_width, logo_height), Image.Resampling.LANCZOS)
+
+            self.logo_photo = ImageTk.PhotoImage(img)
+            self.logo_label.configure(image=self.logo_photo)
+        except:
+            pass
 
     def setup_styles(self):
         """Configure ttk styles for modern look."""
@@ -220,9 +356,16 @@ class EnergyParserGUI:
 
     def create_widgets(self):
         """Create all GUI widgets."""
-        # Main container
-        main_container = ttk.Frame(self.root, style="Main.TFrame")
-        main_container.pack(fill=tk.BOTH, expand=True)
+        # Background image label (behind everything)
+        self.bg_label = tk.Label(self.root)
+        self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+
+        # Main container (on top of background)
+        main_container = tk.Frame(self.root, bg="")
+        main_container.place(x=0, y=0, relwidth=1, relheight=1)
+
+        # Make main_container transparent by not setting bg
+        main_container.configure(bg=COLORS["bg"])
 
         # Header
         self.create_header(main_container)
@@ -258,32 +401,39 @@ class EnergyParserGUI:
         # Footer
         self.create_footer(main_container)
 
+        # Initial background update
+        self.root.after(100, self.update_background)
+
     def create_header(self, parent):
         """Create the header with logo and title."""
         header_frame = tk.Frame(parent, bg=COLORS["primary"], height=80)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
 
-        # Left side - Logo
+        # Left side - Logo (no background, transparent)
         left_frame = tk.Frame(header_frame, bg=COLORS["primary"])
         left_frame.pack(side=tk.LEFT, padx=20, pady=10)
 
-        # Load and display logo
-        logo_path = os.path.join(os.path.dirname(__file__), "logo Navy.jpeg")
-        if os.path.exists(logo_path):
+        # Display logo
+        if self.logo_image_original:
             try:
-                logo_img = Image.open(logo_path)
-                # Resize maintaining aspect ratio
-                logo_img.thumbnail((150, 60), Image.Resampling.LANCZOS)
+                logo_img = self.logo_image_original.copy()
+                logo_img.thumbnail((150, 50), Image.Resampling.LANCZOS)
                 self.logo_photo = ImageTk.PhotoImage(logo_img)
-                logo_label = tk.Label(left_frame, image=self.logo_photo, bg=COLORS["primary"])
-                logo_label.pack(side=tk.LEFT)
+                self.logo_label = tk.Label(left_frame, image=self.logo_photo, bg=COLORS["primary"])
+                self.logo_label.pack(side=tk.LEFT)
             except Exception as e:
                 # Fallback to text
-                title_label = tk.Label(left_frame, text="ReVolta",
+                self.logo_label = tk.Label(left_frame, text="ReVolta",
+                                           font=("Segoe UI", 20, "bold"),
+                                           bg=COLORS["primary"], fg=COLORS["white"])
+                self.logo_label.pack(side=tk.LEFT)
+        else:
+            # Fallback to text if no logo found
+            self.logo_label = tk.Label(left_frame, text="ReVolta",
                                        font=("Segoe UI", 20, "bold"),
                                        bg=COLORS["primary"], fg=COLORS["white"])
-                title_label.pack(side=tk.LEFT)
+            self.logo_label.pack(side=tk.LEFT)
 
         # Center - Title
         center_frame = tk.Frame(header_frame, bg=COLORS["primary"])
@@ -300,20 +450,7 @@ class EnergyParserGUI:
                                  bg=COLORS["primary"], fg=COLORS["light_gray"])
         subtitle_label.pack()
 
-        # Right side - Energy storage image
-        right_frame = tk.Frame(header_frame, bg=COLORS["primary"])
-        right_frame.pack(side=tk.RIGHT, padx=20, pady=10)
-
-        img_path = os.path.join(os.path.dirname(__file__), "shutterstock_2525586747.jpg")
-        if os.path.exists(img_path):
-            try:
-                img = Image.open(img_path)
-                img.thumbnail((100, 60), Image.Resampling.LANCZOS)
-                self.energy_photo = ImageTk.PhotoImage(img)
-                img_label = tk.Label(right_frame, image=self.energy_photo, bg=COLORS["primary"])
-                img_label.pack()
-            except:
-                pass
+        # Right side - removed the small energy image (now using as background)
 
     def create_card(self, parent, title):
         """Create a card-style container."""
@@ -593,8 +730,11 @@ class EnergyParserGUI:
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.analysis = analyze_columns(self.df)
 
-            # Detect granularity
+            # Detect granularity with confidence
+            self.update_progress(50, "Detecting data granularity...")
             date_candidates = [i for i, a in enumerate(self.analysis) if a["type"] == "datetime"]
+            detection_result = None
+
             if date_candidates:
                 date_col_idx = date_candidates[0]
                 date_fmt = self.analysis[date_col_idx].get("date_format", "auto")
@@ -604,7 +744,35 @@ class EnergyParserGUI:
                 else:
                     sample_dates = pd.to_datetime(self.df.iloc[:, date_col_idx],
                                                   format=date_fmt, errors="coerce")
-                self.granularity_label, self.hours_per_interval = detect_granularity(sample_dates)
+                detection_result = detect_granularity_with_confidence(sample_dates)
+
+                # Check confidence threshold (0.7 = 70%)
+                if detection_result["confidence"] >= 0.7:
+                    # High confidence - auto-accept
+                    self.granularity_label = detection_result["label"]
+                    self.hours_per_interval = detection_result["hours_per_interval"]
+                    self.granularity_confidence = detection_result["confidence"]
+                    self.granularity_auto_detected = True
+                else:
+                    # Low confidence - show dialog
+                    self.granularity_auto_detected = False
+                    dialog = GranularityDialog(self.root, detection_result)
+                    self.root.wait_window(dialog)
+                    if dialog.result:
+                        self.granularity_label = dialog.result["label"]
+                        self.hours_per_interval = dialog.result["hours_per_interval"]
+                    else:
+                        # User cancelled - use detected value anyway
+                        self.granularity_label = detection_result["label"]
+                        self.hours_per_interval = detection_result["hours_per_interval"]
+            else:
+                # No date column found - show dialog
+                self.granularity_auto_detected = False
+                dialog = GranularityDialog(self.root, None)
+                self.root.wait_window(dialog)
+                if dialog.result:
+                    self.granularity_label = dialog.result["label"]
+                    self.hours_per_interval = dialog.result["hours_per_interval"]
 
             self.update_progress(70, "Updating display...")
 
@@ -1071,10 +1239,13 @@ class CorrectionDialog(tk.Toplevel):
     def __init__(self, parent, report):
         super().__init__(parent)
         self.title("Apply Corrections")
-        self.geometry("500x450")
         self.configure(bg=COLORS["white"])
         self.transient(parent)
         self.grab_set()
+
+        # Fixed size window
+        self.geometry("600x500")
+        self.resizable(False, False)
 
         self.report = report
         self.result = None
@@ -1089,32 +1260,71 @@ class CorrectionDialog(tk.Toplevel):
 
         # Center the dialog
         self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
-        self.geometry(f"+{x}+{y}")
+        x = parent.winfo_x() + (parent.winfo_width() - 600) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 500) // 2
+        self.geometry(f"600x500+{x}+{y}")
 
     def create_widgets(self):
-        # Title
-        title = tk.Label(self, text="Correction Options",
+        # Main container with proper layout
+        main_frame = tk.Frame(self, bg=COLORS["white"])
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Title at top (fixed height)
+        title_frame = tk.Frame(main_frame, bg=COLORS["white"], height=50)
+        title_frame.pack(fill=tk.X)
+        title_frame.pack_propagate(False)
+
+        title = tk.Label(title_frame, text="Correction Options",
                         font=("Segoe UI", 14, "bold"),
                         bg=COLORS["white"], fg=COLORS["primary"])
-        title.pack(pady=15)
+        title.pack(pady=12)
 
-        # Scrollable frame
-        canvas = tk.Canvas(self, bg=COLORS["white"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        frame = tk.Frame(canvas, bg=COLORS["white"])
+        # Button frame at bottom (fixed height) - CREATE THIS FIRST
+        btn_frame = tk.Frame(main_frame, bg=COLORS["white"], height=70)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        btn_frame.pack_propagate(False)
 
-        frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=frame, anchor="nw")
+        # Separator line above buttons
+        separator = tk.Frame(btn_frame, bg=COLORS["light_gray"], height=1)
+        separator.pack(fill=tk.X)
+
+        # Button container
+        btn_container = tk.Frame(btn_frame, bg=COLORS["white"])
+        btn_container.pack(expand=True, fill=tk.BOTH, pady=15, padx=20)
+
+        apply_btn = ModernButton(btn_container, "Apply Corrections",
+                                command=self.apply,
+                                bg=COLORS["secondary"], width=160, height=40)
+        apply_btn.pack(side=tk.RIGHT, padx=5)
+
+        cancel_btn = ModernButton(btn_container, "Cancel",
+                                 command=self.destroy,
+                                 bg=COLORS["light_gray"], width=100, height=40)
+        cancel_btn.pack(side=tk.RIGHT, padx=5)
+
+        # Scrollable content area (takes remaining space)
+        content_frame = tk.Frame(main_frame, bg=COLORS["white"])
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 5))
+
+        # Canvas with scrollbar
+        canvas = tk.Canvas(content_frame, bg=COLORS["white"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=canvas.yview)
+        scroll_frame = tk.Frame(canvas, bg=COLORS["white"])
+
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw", width=540)
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Duplicates
+        # Bind mousewheel to canvas
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        scroll_frame.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # Option groups
         duplicates = len(self.report.get("duplicates", []))
-        self.create_option_group(frame, "Duplicate Timestamps",
+        self.create_option_group(scroll_frame, "Duplicate Timestamps",
                                 f"{duplicates} found",
                                 self.dup_var,
                                 [("Keep first occurrence", "first"),
@@ -1122,9 +1332,8 @@ class CorrectionDialog(tk.Toplevel):
                                  ("Average values", "average"),
                                  ("Leave as-is", "skip")])
 
-        # Time gaps
         missing_ts = self.report.get("missing_timestamps", 0)
-        self.create_option_group(frame, "Time Gaps",
+        self.create_option_group(scroll_frame, "Time Gaps",
                                 f"{missing_ts} missing timestamps",
                                 self.gap_var,
                                 [("Fill from previous day", "previous_day"),
@@ -1132,9 +1341,8 @@ class CorrectionDialog(tk.Toplevel):
                                  ("Fill with zero", "zero"),
                                  ("Skip", "skip")])
 
-        # Missing values
         missing_vals = sum(v["count"] for v in self.report.get("missing_values", {}).values())
-        self.create_option_group(frame, "Missing Values",
+        self.create_option_group(scroll_frame, "Missing Values",
                                 f"{missing_vals} found",
                                 self.missing_var,
                                 [("Fill from previous day", "previous_day"),
@@ -1142,28 +1350,13 @@ class CorrectionDialog(tk.Toplevel):
                                  ("Fill with zero", "zero"),
                                  ("Leave as-is", "skip")])
 
-        # Outliers
         outliers = len(self.report.get("outliers", []))
-        self.create_option_group(frame, "Outliers",
+        self.create_option_group(scroll_frame, "Outliers",
                                 f"{outliers} detected",
                                 self.outlier_var,
                                 [("Replace from previous day", "previous_day"),
                                  ("Cap at threshold", "cap"),
                                  ("Keep as-is (recommended)", "keep")])
-
-        # Buttons
-        btn_frame = tk.Frame(self, bg=COLORS["white"])
-        btn_frame.pack(fill=tk.X, pady=15, padx=20)
-
-        apply_btn = ModernButton(btn_frame, "Apply Corrections",
-                                command=self.apply,
-                                bg=COLORS["secondary"], width=150)
-        apply_btn.pack(side=tk.RIGHT, padx=5)
-
-        cancel_btn = ModernButton(btn_frame, "Cancel",
-                                 command=self.destroy,
-                                 bg=COLORS["light_gray"], width=100)
-        cancel_btn.pack(side=tk.RIGHT, padx=5)
 
     def create_option_group(self, parent, title, info, variable, options):
         """Create a group of radio options."""
@@ -1194,6 +1387,124 @@ class CorrectionDialog(tk.Toplevel):
             "missing": self.missing_var.get(),
             "outliers": self.outlier_var.get(),
         }
+        self.destroy()
+
+
+class GranularityDialog(tk.Toplevel):
+    """Dialog for selecting data granularity when auto-detection fails."""
+
+    def __init__(self, parent, detection_result: dict | None):
+        super().__init__(parent)
+        self.title("Select Data Granularity")
+        self.configure(bg=COLORS["white"])
+        self.transient(parent)
+        self.grab_set()
+
+        # Fixed size window
+        self.geometry("450x350")
+        self.resizable(False, False)
+
+        self.detection_result = detection_result
+        self.result = None
+        self.granularity_var = tk.StringVar(value="15")  # Default to 15 minutes
+
+        self.create_widgets()
+
+        # Center the dialog
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - 450) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 350) // 2
+        self.geometry(f"450x350+{x}+{y}")
+
+    def create_widgets(self):
+        # Main container
+        main_frame = tk.Frame(self, bg=COLORS["white"], padx=30, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Title
+        title = tk.Label(main_frame, text="Data Granularity",
+                        font=("Segoe UI", 16, "bold"),
+                        bg=COLORS["white"], fg=COLORS["primary"])
+        title.pack(pady=(0, 15))
+
+        # Detection info
+        if self.detection_result:
+            info_frame = tk.Frame(main_frame, bg=COLORS["bg"], padx=15, pady=10)
+            info_frame.pack(fill=tk.X, pady=(0, 15))
+
+            tk.Label(info_frame, text="Auto-detection results:",
+                    font=("Segoe UI", 10, "bold"),
+                    bg=COLORS["bg"], fg=COLORS["text_dark"]).pack(anchor=tk.W)
+
+            detected = self.detection_result["label"]
+            confidence = self.detection_result["confidence"]
+            consistency = self.detection_result["consistency"]
+
+            tk.Label(info_frame, text=f"Detected: {detected}",
+                    font=("Segoe UI", 9),
+                    bg=COLORS["bg"], fg=COLORS["text_dark"]).pack(anchor=tk.W)
+            tk.Label(info_frame, text=f"Confidence: {confidence:.0%}",
+                    font=("Segoe UI", 9),
+                    bg=COLORS["bg"], fg=COLORS["warning"] if confidence < 0.7 else COLORS["success"]).pack(anchor=tk.W)
+            tk.Label(info_frame, text=f"Consistency: {consistency:.0%}",
+                    font=("Segoe UI", 9),
+                    bg=COLORS["bg"], fg=COLORS["text_dark"]).pack(anchor=tk.W)
+
+            tk.Label(info_frame, text="Confidence is too low - please confirm or select manually:",
+                    font=("Segoe UI", 9, "italic"),
+                    bg=COLORS["bg"], fg=COLORS["secondary"]).pack(anchor=tk.W, pady=(5, 0))
+        else:
+            tk.Label(main_frame, text="Could not auto-detect granularity.\nPlease select the time interval between data points:",
+                    font=("Segoe UI", 10),
+                    bg=COLORS["white"], fg=COLORS["text_dark"],
+                    justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 15))
+
+        # Radio buttons for granularity selection
+        options_frame = tk.Frame(main_frame, bg=COLORS["white"])
+        options_frame.pack(fill=tk.X, pady=10)
+
+        for label, minutes, hours in STANDARD_GRANULARITIES:
+            rb = tk.Radiobutton(options_frame, text=label,
+                               variable=self.granularity_var, value=str(minutes),
+                               font=("Segoe UI", 11),
+                               bg=COLORS["white"], fg=COLORS["text_dark"],
+                               activebackground=COLORS["white"],
+                               selectcolor=COLORS["white"])
+            rb.pack(anchor=tk.W, pady=5)
+
+        # Buttons at bottom
+        btn_frame = tk.Frame(main_frame, bg=COLORS["white"])
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
+
+        confirm_btn = ModernButton(btn_frame, "Confirm",
+                                   command=self.confirm,
+                                   bg=COLORS["primary"], width=120, height=38)
+        confirm_btn.pack(side=tk.RIGHT, padx=5)
+
+        # If we have detection result, offer to use it
+        if self.detection_result:
+            use_detected_btn = ModernButton(btn_frame, f"Use {self.detection_result['label']}",
+                                            command=self.use_detected,
+                                            bg=COLORS["light_gray"], width=140, height=38)
+            use_detected_btn.pack(side=tk.RIGHT, padx=5)
+
+    def confirm(self):
+        """Confirm button handler."""
+        minutes = int(self.granularity_var.get())
+        for label, mins, hours in STANDARD_GRANULARITIES:
+            if mins == minutes:
+                self.result = {"label": label, "hours_per_interval": hours, "minutes": minutes}
+                break
+        self.destroy()
+
+    def use_detected(self):
+        """Use the auto-detected value."""
+        if self.detection_result:
+            self.result = {
+                "label": self.detection_result["label"],
+                "hours_per_interval": self.detection_result["hours_per_interval"],
+                "minutes": self.detection_result["minutes"],
+            }
         self.destroy()
 
 

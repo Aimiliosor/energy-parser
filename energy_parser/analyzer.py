@@ -83,29 +83,116 @@ def detect_date_format(series: pd.Series) -> tuple[str | None, str | None]:
 def detect_granularity(dates: pd.Series) -> tuple[str, float]:
     """Detect time granularity from a datetime series.
     Returns (label, hours_per_interval)."""
+    result = detect_granularity_with_confidence(dates)
+    return result["label"], result["hours_per_interval"]
+
+
+def detect_granularity_with_confidence(dates: pd.Series) -> dict:
+    """Detect time granularity with confidence score.
+
+    Returns dict with:
+        - label: Human-readable granularity (e.g., "15 min")
+        - hours_per_interval: Float hours per interval
+        - minutes: Raw minutes detected
+        - confidence: Float 0-1 indicating reliability
+        - is_standard: Whether it matches a standard interval (10, 15, 30, 60 min)
+        - consistency: Percentage of intervals matching the detected granularity
+    """
+    result = {
+        "label": "unknown",
+        "hours_per_interval": 1.0,
+        "minutes": 60.0,
+        "confidence": 0.0,
+        "is_standard": False,
+        "consistency": 0.0,
+    }
+
     if len(dates) < 2:
-        return "unknown", 1.0
+        return result
 
-    diffs = dates.diff().dropna()
+    # Drop NaT values and sort
+    clean_dates = dates.dropna().sort_values()
+    if len(clean_dates) < 2:
+        return result
+
+    diffs = clean_dates.diff().dropna()
     if diffs.empty:
-        return "unknown", 1.0
+        return result
 
-    median_diff = diffs.median()
-    minutes = median_diff.total_seconds() / 60
+    # Convert to minutes
+    diff_minutes = diffs.dt.total_seconds() / 60
 
-    if minutes <= 12:
-        return "10 min", 10 / 60
-    elif minutes <= 17:
-        return "15 min", 15 / 60
-    elif minutes <= 35:
-        return "30 min", 30 / 60
-    elif minutes <= 75:
-        return "1 hour", 1.0
-    elif minutes <= 1500:
-        return f"{int(round(minutes))} min", minutes / 60
+    # Calculate statistics
+    median_minutes = diff_minutes.median()
+
+    # Standard granularities to check
+    standard_intervals = {
+        10: ("10 min", 10 / 60),
+        15: ("15 min", 15 / 60),
+        30: ("30 min", 30 / 60),
+        60: ("1 hour", 1.0),
+    }
+
+    # Find closest standard interval
+    closest_standard = None
+    closest_distance = float('inf')
+    for std_min in standard_intervals:
+        distance = abs(median_minutes - std_min)
+        if distance < closest_distance:
+            closest_distance = distance
+            closest_standard = std_min
+
+    # Check if median is close to a standard interval (within 20% tolerance)
+    is_standard = False
+    if closest_standard:
+        tolerance = closest_standard * 0.2
+        if closest_distance <= tolerance:
+            is_standard = True
+            result["minutes"] = closest_standard
+            result["label"], result["hours_per_interval"] = standard_intervals[closest_standard]
+        else:
+            # Non-standard interval
+            result["minutes"] = median_minutes
+            if median_minutes < 60:
+                result["label"] = f"{int(round(median_minutes))} min"
+                result["hours_per_interval"] = median_minutes / 60
+            else:
+                hours = median_minutes / 60
+                result["label"] = f"{hours:.1f} hours"
+                result["hours_per_interval"] = hours
+
+    result["is_standard"] = is_standard
+
+    # Calculate consistency - what percentage of intervals match the detected granularity
+    target_minutes = result["minutes"]
+    tolerance = target_minutes * 0.3  # 30% tolerance for consistency check
+    matching = ((diff_minutes >= target_minutes - tolerance) &
+                (diff_minutes <= target_minutes + tolerance)).sum()
+    consistency = matching / len(diff_minutes) if len(diff_minutes) > 0 else 0
+    result["consistency"] = consistency
+
+    # Calculate overall confidence
+    # High confidence if: standard interval + high consistency
+    if is_standard and consistency >= 0.8:
+        result["confidence"] = 0.95
+    elif is_standard and consistency >= 0.6:
+        result["confidence"] = 0.75
+    elif consistency >= 0.8:
+        result["confidence"] = 0.7
+    elif consistency >= 0.5:
+        result["confidence"] = 0.5
     else:
-        hours = minutes / 60
-        return f"{hours:.1f} hours", hours
+        result["confidence"] = 0.3
+
+    return result
+
+
+STANDARD_GRANULARITIES = [
+    ("10 minutes", 10, 10 / 60),
+    ("15 minutes", 15, 15 / 60),
+    ("30 minutes", 30, 30 / 60),
+    ("60 minutes (1 hour)", 60, 1.0),
+]
 
 
 def detect_unit(series: pd.Series) -> str:
