@@ -4,6 +4,7 @@ import pandas as pd
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.panel import Panel
+from rich.table import Table
 
 from energy_parser.file_reader import load_file, display_preview, clean_path
 from energy_parser.analyzer import (
@@ -15,6 +16,7 @@ from energy_parser.analyzer import (
 )
 from energy_parser.transformer import transform_data
 from energy_parser.quality_check import run_quality_check
+from energy_parser.data_validator import run_validation
 from energy_parser.corrector import run_corrections
 from energy_parser.exporter import save_xlsx
 
@@ -188,6 +190,103 @@ def prompt_column_selection(df: pd.DataFrame, analysis: list[dict]) -> dict:
     }
 
 
+def _kpi_color(value, green_threshold, yellow_threshold, higher_is_better=True):
+    """Return a Rich color tag based on threshold."""
+    if higher_is_better:
+        if value >= green_threshold:
+            return "bold green"
+        elif value >= yellow_threshold:
+            return "bold yellow"
+        return "bold red"
+    else:
+        if value <= green_threshold:
+            return "bold green"
+        elif value <= yellow_threshold:
+            return "bold yellow"
+        return "bold red"
+
+
+def display_kpi_dashboard(kpi: dict):
+    """Display a Rich table KPI dashboard."""
+    table = Table(title="Data Quality KPI Dashboard", show_lines=True, expand=True)
+    table.add_column("KPI", style="bold", width=25)
+    table.add_column("Value", width=30)
+    table.add_column("Status", width=10)
+
+    # Quality Score
+    score = kpi["quality_score"]
+    color = _kpi_color(score, 80, 60)
+    status = "PASS" if score >= 80 else ("WARN" if score >= 60 else "FAIL")
+    table.add_row("Quality Score", f"[{color}]{score}/100[/{color}]", f"[{color}]{status}[/{color}]")
+
+    # Completeness
+    comp = kpi["completeness_pct"]
+    color = _kpi_color(comp, 95, 80)
+    table.add_row("Completeness", f"[{color}]{comp:.1f}%[/{color}]",
+                  f"[{color}]{'PASS' if comp >= 95 else ('WARN' if comp >= 80 else 'FAIL')}[/{color}]")
+
+    # Integrity
+    integrity = kpi["integrity"]["status"]
+    if integrity == "PASS":
+        color = "bold green"
+    elif integrity == "N/A":
+        color = "dim"
+    else:
+        color = "bold red"
+    table.add_row("Integrity", f"[{color}]{integrity}[/{color}]",
+                  f"[{color}]{integrity}[/{color}]")
+
+    # Missing Values
+    mv = kpi["missing_values"]
+    color = _kpi_color(mv, 0, 10, higher_is_better=False)
+    table.add_row("Missing Values", f"[{color}]{mv}[/{color}]",
+                  f"[{color}]{'PASS' if mv == 0 else ('WARN' if mv <= 10 else 'FAIL')}[/{color}]")
+
+    # Timestamp Issues
+    ti = kpi["timestamp_issues"]
+    color = _kpi_color(ti, 0, 5, higher_is_better=False)
+    table.add_row("Timestamp Issues", f"[{color}]{ti}[/{color}]",
+                  f"[{color}]{'PASS' if ti == 0 else ('WARN' if ti <= 5 else 'FAIL')}[/{color}]")
+
+    # Outliers
+    outliers = kpi["outliers"]
+    total = outliers["total"]
+    color = _kpi_color(total, 0, 5, higher_is_better=False)
+    breakdown = f"(low:{outliers['low']} med:{outliers['medium']} high:{outliers['high']})"
+    table.add_row("Outliers", f"[{color}]{total} {breakdown}[/{color}]",
+                  f"[{color}]{'PASS' if total == 0 else ('WARN' if total <= 5 else 'FAIL')}[/{color}]")
+
+    # Value Range
+    vr = kpi["value_range"]
+    table.add_row("Value Range", f"min={vr['min']:.2f}  max={vr['max']:.2f}  avg={vr['avg']:.2f}", "")
+
+    # Processing Accuracy
+    acc = kpi["processing_accuracy_pct"]
+    color = _kpi_color(acc, 95, 80)
+    table.add_row("Processing Accuracy", f"[{color}]{acc:.1f}%[/{color}]",
+                  f"[{color}]{'PASS' if acc >= 95 else ('WARN' if acc >= 80 else 'FAIL')}[/{color}]")
+
+    console.print(table)
+
+    # Detailed results
+    if kpi.get("detailed_results"):
+        detail_table = Table(title="Detailed Validation Results", show_lines=True)
+        detail_table.add_column("Check", width=25)
+        detail_table.add_column("Status", width=8)
+        detail_table.add_column("Details", width=60)
+
+        for r in kpi["detailed_results"]:
+            if r["status"] == "PASS":
+                color = "green"
+            elif r["status"] == "WARN":
+                color = "yellow"
+            else:
+                color = "red"
+            detail_table.add_row(r["name"], f"[{color}]{r['status']}[/{color}]", r["details"])
+
+        console.print(detail_table)
+
+
 def run():
     """Main orchestrator — sequences all 5 phases."""
     try:
@@ -254,6 +353,15 @@ def run():
         # ===== Phase 4: Quality Check =====
         report = run_quality_check(transformed, granularity_label, hours_per_interval)
 
+        if report:
+            kpi = run_validation(
+                df=transformed, quality_report=report,
+                original_df=df,
+                consumption_col=selection["consumption_col"],
+                production_col=selection["production_col"],
+            )
+            display_kpi_dashboard(kpi)
+
         if not report:
             console.print("\n[bold green]Done! Output saved to:[/bold green]")
             console.print(f"  {initial_path}")
@@ -281,6 +389,18 @@ def run():
             return
 
         corrected = run_corrections(transformed, report, hours_per_interval)
+
+        # Post-correction validation
+        post_report = run_quality_check(corrected, granularity_label, hours_per_interval, silent=True)
+        if post_report:
+            post_kpi = run_validation(
+                df=corrected, quality_report=post_report,
+                original_df=df, pre_correction_df=transformed,
+                consumption_col=selection["consumption_col"],
+                production_col=selection["production_col"],
+            )
+            console.print("\n[bold cyan]Post-Correction Validation[/bold cyan]")
+            display_kpi_dashboard(post_kpi)
 
         # Ask for output filename
         default_clean = f"{base_name}_clean.xlsx"

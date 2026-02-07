@@ -34,6 +34,7 @@ from energy_parser.corrector import (
     correct_missing_values,
 )
 from energy_parser.exporter import save_xlsx
+from energy_parser.data_validator import run_validation
 
 
 # Color Palette
@@ -179,6 +180,7 @@ class EnergyParserGUI:
         self.quality_report = None
         self.hours_per_interval = 1.0
         self.granularity_label = "unknown"
+        self.kpi_data = None
 
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
@@ -416,6 +418,7 @@ class EnergyParserGUI:
         self.create_config_section()
         self.create_actions_section()
         self.create_results_section()
+        self.create_kpi_section()
         self.create_tools_section()
 
         # Footer
@@ -672,9 +675,153 @@ class EnergyParserGUI:
 
         self.results_text.config(state=tk.DISABLED)
 
+    def create_kpi_section(self):
+        """Create the KPI dashboard section."""
+        content = self.create_card(self.content_frame, "6. KPI Dashboard")
+
+        self.kpi_placeholder = tk.Label(
+            content, text="Run Quality Check to see KPI dashboard",
+            font=("Segoe UI", 10, "italic"),
+            bg=COLORS["white"], fg=COLORS["light_gray"])
+        self.kpi_placeholder.pack(anchor=tk.W, pady=5)
+
+        # Frame for KPI tiles
+        self.kpi_frame = tk.Frame(content, bg=COLORS["white"])
+        self.kpi_frame.pack(fill=tk.X, pady=5)
+
+        # Frame for detailed results
+        self.kpi_detail_frame = tk.Frame(content, bg=COLORS["white"])
+        self.kpi_detail_frame.pack(fill=tk.X, pady=5)
+
+    def _create_kpi_tile(self, parent, row, col, title, value, color):
+        """Create a single KPI tile in the grid."""
+        tile = tk.Frame(parent, bg=COLORS["white"], relief=tk.FLAT, bd=1,
+                        highlightbackground=COLORS["light_gray"], highlightthickness=1)
+        tile.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+
+        # Colored top bar
+        bar = tk.Frame(tile, bg=color, height=4)
+        bar.pack(fill=tk.X)
+
+        # Title label
+        tk.Label(tile, text=title, font=("Segoe UI", 8),
+                 bg=COLORS["white"], fg=COLORS["light_gray"]).pack(padx=8, pady=(6, 0), anchor=tk.W)
+
+        # Value label
+        tk.Label(tile, text=str(value), font=("Segoe UI", 14, "bold"),
+                 bg=COLORS["white"], fg=color).pack(padx=8, pady=(0, 8), anchor=tk.W)
+
+    def _status_color(self, value, green_threshold, yellow_threshold, higher_is_better=True):
+        """Return a hex color based on threshold."""
+        if higher_is_better:
+            if value >= green_threshold:
+                return COLORS["success"]
+            elif value >= yellow_threshold:
+                return COLORS["warning"]
+            return COLORS["secondary"]
+        else:
+            if value <= green_threshold:
+                return COLORS["success"]
+            elif value <= yellow_threshold:
+                return COLORS["warning"]
+            return COLORS["secondary"]
+
+    def display_kpi_dashboard(self, kpi):
+        """Populate KPI tiles from a kpi dict."""
+        self.kpi_data = kpi
+
+        # Hide placeholder
+        self.kpi_placeholder.pack_forget()
+
+        # Clear existing tiles
+        for w in self.kpi_frame.winfo_children():
+            w.destroy()
+        for w in self.kpi_detail_frame.winfo_children():
+            w.destroy()
+
+        # Configure grid columns
+        for c in range(3):
+            self.kpi_frame.columnconfigure(c, weight=1)
+
+        # Row 0: Quality Score, Completeness, Integrity
+        score = kpi["quality_score"]
+        self._create_kpi_tile(self.kpi_frame, 0, 0, "Quality Score",
+                              f"{score}/100",
+                              self._status_color(score, 80, 60))
+
+        comp = kpi["completeness_pct"]
+        self._create_kpi_tile(self.kpi_frame, 0, 1, "Completeness",
+                              f"{comp:.1f}%",
+                              self._status_color(comp, 95, 80))
+
+        integrity = kpi["integrity"]["status"]
+        if integrity == "PASS":
+            i_color = COLORS["success"]
+        elif integrity == "N/A":
+            i_color = COLORS["light_gray"]
+        else:
+            i_color = COLORS["secondary"]
+        self._create_kpi_tile(self.kpi_frame, 0, 2, "Integrity", integrity, i_color)
+
+        # Row 1: Missing Values, Timestamp Issues, Outliers
+        mv = kpi["missing_values"]
+        self._create_kpi_tile(self.kpi_frame, 1, 0, "Missing Values",
+                              str(mv),
+                              self._status_color(mv, 0, 10, higher_is_better=False))
+
+        ti = kpi["timestamp_issues"]
+        self._create_kpi_tile(self.kpi_frame, 1, 1, "Timestamp Issues",
+                              str(ti),
+                              self._status_color(ti, 0, 5, higher_is_better=False))
+
+        outliers = kpi["outliers"]
+        total = outliers["total"]
+        self._create_kpi_tile(self.kpi_frame, 1, 2, "Outliers",
+                              str(total),
+                              self._status_color(total, 0, 5, higher_is_better=False))
+
+        # Row 2: Value Range, Processing Accuracy, Outlier Breakdown
+        vr = kpi["value_range"]
+        self._create_kpi_tile(self.kpi_frame, 2, 0, "Value Range",
+                              f"{vr['min']:.1f} - {vr['max']:.1f}",
+                              COLORS["primary"])
+
+        acc = kpi["processing_accuracy_pct"]
+        self._create_kpi_tile(self.kpi_frame, 2, 1, "Processing Accuracy",
+                              f"{acc:.1f}%",
+                              self._status_color(acc, 95, 80))
+
+        breakdown = f"L:{outliers['low']} M:{outliers['medium']} H:{outliers['high']}"
+        self._create_kpi_tile(self.kpi_frame, 2, 2, "Outlier Breakdown",
+                              breakdown,
+                              self._status_color(total, 0, 5, higher_is_better=False))
+
+        # Detailed results (expandable text)
+        if kpi.get("detailed_results"):
+            tk.Label(self.kpi_detail_frame, text="Detailed Validation Results",
+                     font=("Segoe UI", 10, "bold"),
+                     bg=COLORS["white"], fg=COLORS["primary"]).pack(anchor=tk.W, pady=(10, 5))
+
+            detail_text = tk.Text(self.kpi_detail_frame, height=8, width=90,
+                                  font=("Consolas", 9),
+                                  bg=COLORS["bg"], fg=COLORS["text_dark"],
+                                  relief=tk.FLAT, padx=10, pady=10)
+            detail_text.pack(fill=tk.X)
+
+            detail_text.tag_configure("pass", foreground=COLORS["success"])
+            detail_text.tag_configure("warn", foreground=COLORS["warning"])
+            detail_text.tag_configure("fail", foreground=COLORS["secondary"])
+
+            for r in kpi["detailed_results"]:
+                tag = r["status"].lower()
+                detail_text.insert(tk.END, f"  [{r['status']}] ", tag)
+                detail_text.insert(tk.END, f"{r['name']}: {r['details']}\n")
+
+            detail_text.config(state=tk.DISABLED)
+
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""
-        content = self.create_card(self.content_frame, "6. Developer Tools")
+        content = self.create_card(self.content_frame, "7. Developer Tools")
 
         tools_row = tk.Frame(content, bg=COLORS["white"])
         tools_row.pack(fill=tk.X)
@@ -980,10 +1127,23 @@ class EnergyParserGUI:
                     self.hours_per_interval
                 )
 
-            self.update_progress(100, "Quality check complete!")
+            self.update_progress(80, "Computing KPI dashboard...")
 
             # Display report
             self.display_quality_report()
+
+            # Run validation and display KPI dashboard
+            if self.quality_report:
+                cons_col = self.get_selected_column_index(self.cons_col_var.get())
+                prod_col = self.get_selected_column_index(self.prod_col_var.get())
+                kpi = run_validation(
+                    df=self.transformed_df, quality_report=self.quality_report,
+                    original_df=self.df,
+                    consumption_col=cons_col, production_col=prod_col,
+                )
+                self.display_kpi_dashboard(kpi)
+
+            self.update_progress(100, "Quality check complete!")
 
             # Enable corrections if issues found
             if self.quality_report:
@@ -1078,6 +1238,7 @@ class EnergyParserGUI:
         self.update_progress(20, "Applying corrections...")
 
         try:
+            pre_correction_df = self.transformed_df.copy()
             df = self.transformed_df.copy()
             choices = dialog.result
 
@@ -1161,6 +1322,25 @@ class EnergyParserGUI:
                         df.at[o["row"], o["column"]] = o["median"] / 10
 
             self.transformed_df = df
+            self.update_progress(90, "Post-correction validation...")
+
+            # Post-correction KPI dashboard
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    post_report = run_quality_check(
+                        df, self.granularity_label, self.hours_per_interval, silent=True)
+                if post_report:
+                    cons_col = self.get_selected_column_index(self.cons_col_var.get())
+                    prod_col = self.get_selected_column_index(self.prod_col_var.get())
+                    post_kpi = run_validation(
+                        df=df, quality_report=post_report,
+                        original_df=self.df, pre_correction_df=pre_correction_df,
+                        consumption_col=cons_col, production_col=prod_col,
+                    )
+                    self.display_kpi_dashboard(post_kpi)
+            except Exception:
+                pass  # Non-critical: don't block corrections on KPI failure
+
             self.update_progress(100, "Corrections applied!")
 
             self.show_result("Corrections applied successfully!\n"

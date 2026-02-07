@@ -80,9 +80,11 @@ def generate_expected_timestamps(start: pd.Timestamp, end: pd.Timestamp, freq_mi
     return pd.date_range(start=start, end=end, freq=freq)
 
 
-def run_quality_check(df: pd.DataFrame, granularity_label: str, hours_per_interval: float) -> dict:
+def run_quality_check(df: pd.DataFrame, granularity_label: str, hours_per_interval: float,
+                      silent: bool = False) -> dict:
     """Run all quality checks and return a report dict."""
-    console.print("\n[bold cyan]Phase 4: Quality Check[/bold cyan]")
+    if not silent:
+        console.print("\n[bold cyan]Phase 4: Quality Check[/bold cyan]")
 
     granularity_minutes = hours_per_interval * 60
     dates = df["Date & Time"]
@@ -91,7 +93,8 @@ def run_quality_check(df: pd.DataFrame, granularity_label: str, hours_per_interv
     # --- Completeness ---
     valid_dates = dates.dropna().sort_values()
     if valid_dates.empty:
-        console.print("[red]No valid dates found. Cannot perform quality check.[/red]")
+        if not silent:
+            console.print("[red]No valid dates found. Cannot perform quality check.[/red]")
         return {}
 
     start = valid_dates.iloc[0]
@@ -136,7 +139,8 @@ def run_quality_check(df: pd.DataFrame, granularity_label: str, hours_per_interv
     report["outliers"] = all_outliers
 
     # --- Display Report ---
-    display_report(report)
+    if not silent:
+        display_report(report)
     return report
 
 
