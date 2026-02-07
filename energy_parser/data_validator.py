@@ -289,6 +289,264 @@ def calculate_quality_score(completeness_pct: float,
 
 
 # ---------------------------------------------------------------------------
+# Untrustworthiness Metric
+# ---------------------------------------------------------------------------
+
+def calculate_untrustworthiness(df: pd.DataFrame,
+                                quality_report: dict,
+                                outlier_classification: dict,
+                                spikes: list[dict]) -> dict:
+    """Calculate what percentage of data points are flagged as unreliable.
+
+    Counts unique row indices affected by: missing values, outliers,
+    timestamp gaps, negative values, duplicates, and impossible spikes.
+
+    Returns dict with pct, flagged_count, total_count, rating, and breakdown.
+    """
+    total_rows = len(df)
+    if total_rows == 0:
+        return {"pct": 0.0, "flagged": 0, "total": 0,
+                "rating": "Excellent", "color_tier": "green",
+                "breakdown": {}}
+
+    flagged_rows = set()
+    breakdown = {}
+
+    # Missing values (NaN in value columns)
+    value_cols = [c for c in df.columns if c != "Date & Time"]
+    missing_rows = set()
+    for col in value_cols:
+        nan_indices = df[df[col].isna()].index.tolist()
+        missing_rows.update(nan_indices)
+    flagged_rows.update(missing_rows)
+    breakdown["missing_values"] = len(missing_rows)
+
+    # Outliers
+    outlier_rows = set()
+    for o in quality_report.get("outliers", []):
+        outlier_rows.add(o["row"])
+    flagged_rows.update(outlier_rows)
+    breakdown["outliers"] = len(outlier_rows)
+
+    # Timestamp gaps — count rows adjacent to gaps
+    gap_rows = set()
+    for g in quality_report.get("gaps", []):
+        gap_rows.add(g["after_row"])
+        if g["after_row"] + 1 < total_rows:
+            gap_rows.add(g["after_row"] + 1)
+    # Also add missing timestamp count (virtual rows that don't exist)
+    missing_ts = quality_report.get("missing_timestamps", 0)
+    flagged_rows.update(gap_rows)
+    breakdown["timestamp_gaps"] = len(gap_rows) + missing_ts
+
+    # Negative values
+    neg_rows = set()
+    for n in quality_report.get("negatives", []):
+        neg_rows.add(n["row"])
+    flagged_rows.update(neg_rows)
+    breakdown["negatives"] = len(neg_rows)
+
+    # Duplicates
+    dup_rows = set()
+    for d in quality_report.get("duplicates", []):
+        for idx in d["row_indices"]:
+            dup_rows.add(idx)
+    flagged_rows.update(dup_rows)
+    breakdown["duplicates"] = len(dup_rows)
+
+    # Impossible spikes
+    spike_rows = set()
+    for s in spikes:
+        spike_rows.add(s["row"])
+    flagged_rows.update(spike_rows)
+    breakdown["spikes"] = len(spike_rows)
+
+    # Total flagged includes actual flagged rows + virtual missing timestamps
+    total_flagged = len(flagged_rows) + missing_ts
+    # Denominator includes actual rows + missing timestamps (the full expected dataset)
+    total_considered = total_rows + missing_ts
+
+    pct = (total_flagged / total_considered * 100) if total_considered > 0 else 0.0
+    pct = min(100.0, pct)
+
+    # Rating tiers
+    if pct <= 5:
+        rating, color_tier = "Excellent", "green"
+    elif pct <= 15:
+        rating, color_tier = "Acceptable", "yellow"
+    elif pct <= 30:
+        rating, color_tier = "Poor", "orange"
+    else:
+        rating, color_tier = "Critical", "red"
+
+    return {
+        "pct": round(pct, 1),
+        "flagged": total_flagged,
+        "total": total_considered,
+        "rating": rating,
+        "color_tier": color_tier,
+        "breakdown": breakdown,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Actionable Recommendations
+# ---------------------------------------------------------------------------
+
+def generate_recommendations(quality_report: dict,
+                             outlier_classification: dict,
+                             temporal_summary: dict,
+                             spikes: list[dict],
+                             untrustworthiness: dict) -> list[dict]:
+    """Generate prioritized, actionable recommendations based on detected issues.
+
+    Each recommendation has: priority (1=critical), category, message.
+    Sorted by priority (most critical first).
+    """
+    recs = []
+
+    # --- Priority 1 (Critical) ---
+
+    # Negative values
+    negatives = quality_report.get("negatives", [])
+    if negatives:
+        cols = sorted(set(n["column"] for n in negatives))
+        recs.append({
+            "priority": 1,
+            "category": "Negative Values",
+            "message": (f"Verify meter readings — {len(negatives)} negative consumption "
+                        f"value(s) detected in {', '.join(cols)}. Negative readings typically "
+                        f"indicate meter errors or incorrect data export configuration."),
+        })
+
+    # High-severity outliers
+    if outlier_classification.get("high", 0) > 0:
+        high_count = outlier_classification["high"]
+        outlier_dates = []
+        for o in quality_report.get("outliers", []):
+            if o["median"] > 0 and (o["value"] / o["median"] if o["type"] == "high"
+                                     else o["median"] / o["value"] if o["value"] != 0
+                                     else float("inf")) > 10:
+                outlier_dates.append(str(o["row"]))
+        date_hint = f" at rows {', '.join(outlier_dates[:5])}" if outlier_dates else ""
+        if len(outlier_dates) > 5:
+            date_hint += f" and {len(outlier_dates) - 5} more"
+        recs.append({
+            "priority": 1,
+            "category": "Severe Outliers",
+            "message": (f"Review {high_count} extreme outlier(s){date_hint} — "
+                        f"values exceed 10x the median. Possible meter malfunction "
+                        f"or data corruption. Consider replacing with interpolated values."),
+        })
+
+    # --- Priority 2 (Important) ---
+
+    # Timestamp gaps
+    gaps = quality_report.get("gaps", [])
+    missing_ts = quality_report.get("missing_timestamps", 0)
+    if gaps:
+        granularity = quality_report.get("granularity", "unknown")
+        recs.append({
+            "priority": 2,
+            "category": "Timestamp Gaps",
+            "message": (f"Check data export settings — found {len(gaps)} gap(s) with "
+                        f"{missing_ts} missing timestamp(s). Expecting {granularity} intervals "
+                        f"but found discontinuities. Fill gaps using previous-day values or "
+                        f"interpolation to ensure continuous time series."),
+        })
+
+    # Missing values
+    missing_values = quality_report.get("missing_values", {})
+    total_missing = sum(v["count"] for v in missing_values.values())
+    if total_missing > 0:
+        cols = list(missing_values.keys())
+        recs.append({
+            "priority": 2,
+            "category": "Missing Values",
+            "message": (f"Fill {total_missing} missing value(s) in {', '.join(cols)}. "
+                        f"Use previous-day fill for periodic data or linear interpolation "
+                        f"for short gaps. Remove incomplete periods at the start/end of the "
+                        f"dataset if they cannot be reliably filled."),
+        })
+
+    # Duplicates
+    duplicates = quality_report.get("duplicates", [])
+    if duplicates:
+        total_dup_rows = sum(len(d["row_indices"]) for d in duplicates)
+        recs.append({
+            "priority": 2,
+            "category": "Duplicate Timestamps",
+            "message": (f"Resolve {len(duplicates)} duplicate timestamp group(s) "
+                        f"affecting {total_dup_rows} rows. Keep the first occurrence, "
+                        f"average the values, or investigate if they represent different "
+                        f"meter channels that need separate processing."),
+        })
+
+    # --- Priority 3 (Advisory) ---
+
+    # Medium/low outliers
+    med_count = outlier_classification.get("medium", 0)
+    low_count = outlier_classification.get("low", 0)
+    if med_count > 0 or low_count > 0:
+        parts = []
+        if med_count > 0:
+            parts.append(f"{med_count} moderate")
+        if low_count > 0:
+            parts.append(f"{low_count} mild")
+        recs.append({
+            "priority": 3,
+            "category": "Outliers",
+            "message": (f"Review {' and '.join(parts)} outlier(s) — these may represent "
+                        f"unusual but valid events (holidays, maintenance, weather extremes). "
+                        f"Cap at threshold values if they skew analysis, or keep if explainable."),
+        })
+
+    # Impossible spikes
+    if spikes:
+        recs.append({
+            "priority": 3,
+            "category": "Consumption Spikes",
+            "message": (f"Investigate {len(spikes)} sudden spike(s) exceeding 10x the "
+                        f"rolling average. These often indicate meter resets, data "
+                        f"accumulation errors, or brief equipment faults."),
+        })
+
+    # --- Priority 4 (General) ---
+
+    # Overall quality general advice
+    untrust_pct = untrustworthiness.get("pct", 0)
+    if untrust_pct > 30:
+        recs.append({
+            "priority": 4,
+            "category": "General",
+            "message": ("Data quality is critical — consider re-exporting from the source "
+                        "system or contacting the data provider. Over 30% of records have "
+                        "quality issues that may significantly impact analysis accuracy."),
+        })
+    elif untrust_pct > 15:
+        recs.append({
+            "priority": 4,
+            "category": "General",
+            "message": ("Data quality is below acceptable thresholds. Apply automated "
+                        "corrections (gap filling, outlier capping) and verify results "
+                        "against known billing or metering data before using in production."),
+        })
+
+    # If no issues at all
+    if not recs:
+        recs.append({
+            "priority": 4,
+            "category": "General",
+            "message": ("Data quality is excellent — no significant issues detected. "
+                        "The dataset is ready for analysis and export."),
+        })
+
+    # Sort by priority
+    recs.sort(key=lambda r: r["priority"])
+    return recs
+
+
+# ---------------------------------------------------------------------------
 # Main Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -426,6 +684,15 @@ def run_validation(df: pd.DataFrame,
             "details": "No negative values",
         })
 
+    # --- Untrustworthiness ---
+    untrustworthiness = calculate_untrustworthiness(
+        df, quality_report, outlier_classification, spikes)
+
+    # --- Recommendations ---
+    recommendations = generate_recommendations(
+        quality_report, outlier_classification, temporal_summary,
+        spikes, untrustworthiness)
+
     return {
         "completeness_pct": round(completeness_pct, 1),
         "quality_score": quality_score,
@@ -438,4 +705,6 @@ def run_validation(df: pd.DataFrame,
         "processing_accuracy_pct": round(processing_accuracy, 1),
         "statistics": statistics,
         "detailed_results": detailed_results,
+        "untrustworthiness": untrustworthiness,
+        "recommendations": recommendations,
     }

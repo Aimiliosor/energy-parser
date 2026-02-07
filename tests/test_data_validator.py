@@ -15,6 +15,8 @@ from energy_parser.data_validator import (
     calculate_temporal_summary,
     calculate_statistics,
     calculate_quality_score,
+    calculate_untrustworthiness,
+    generate_recommendations,
     run_validation,
 )
 
@@ -442,3 +444,207 @@ class TestRunValidation:
         report = _make_quality_report(total_rows=100, expected_timestamps=100)
         kpi = run_validation(df=df, quality_report=report)
         assert 0 <= kpi["quality_score"] <= 100
+
+    def test_untrustworthiness_in_kpi(self):
+        df = _make_standard_df(rows=100)
+        report = _make_quality_report(total_rows=100, expected_timestamps=100)
+        kpi = run_validation(df=df, quality_report=report)
+        assert "untrustworthiness" in kpi
+        u = kpi["untrustworthiness"]
+        assert "pct" in u
+        assert "flagged" in u
+        assert "total" in u
+        assert "rating" in u
+        assert "color_tier" in u
+
+    def test_recommendations_in_kpi(self):
+        df = _make_standard_df(rows=100)
+        report = _make_quality_report(total_rows=100, expected_timestamps=100)
+        kpi = run_validation(df=df, quality_report=report)
+        assert "recommendations" in kpi
+        assert isinstance(kpi["recommendations"], list)
+        for r in kpi["recommendations"]:
+            assert "priority" in r
+            assert "category" in r
+            assert "message" in r
+
+
+# ---------------------------------------------------------------------------
+# TestCalculateUntrustworthiness
+# ---------------------------------------------------------------------------
+
+class TestCalculateUntrustworthiness:
+    def test_clean_data_excellent(self):
+        df = _make_standard_df(rows=100)
+        report = _make_quality_report(total_rows=100, expected_timestamps=100)
+        result = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert result["pct"] == 0.0
+        assert result["rating"] == "Excellent"
+        assert result["color_tier"] == "green"
+
+    def test_with_missing_values(self):
+        dates = pd.date_range("2024-01-01", freq="15min", periods=100)
+        values = list(range(95)) + [np.nan] * 5
+        df = pd.DataFrame({"Date & Time": dates, "Consumption (kW)": values})
+        report = _make_quality_report(total_rows=100, expected_timestamps=100)
+        result = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert result["pct"] == 5.0
+        assert result["flagged"] == 5
+        assert result["breakdown"]["missing_values"] == 5
+
+    def test_with_outliers(self):
+        df = _make_standard_df(rows=100)
+        outliers = [{"row": 5, "value": 100, "median": 10, "type": "high", "column": "c"}]
+        report = _make_quality_report(total_rows=100, expected_timestamps=100, outliers=outliers)
+        result = calculate_untrustworthiness(df, report, {"low": 1, "medium": 0, "high": 0, "total": 1}, [])
+        assert result["flagged"] >= 1
+        assert result["breakdown"]["outliers"] == 1
+
+    def test_with_duplicates(self):
+        df = _make_standard_df(rows=100)
+        duplicates = [{"timestamp": pd.Timestamp("2024-01-01"), "row_indices": [0, 1, 2]}]
+        report = _make_quality_report(total_rows=100, expected_timestamps=100, duplicates=duplicates)
+        result = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert result["breakdown"]["duplicates"] == 3
+
+    def test_with_negatives(self):
+        df = _make_standard_df(rows=100)
+        negatives = [{"row": 10, "value": -5, "column": "c"}, {"row": 20, "value": -3, "column": "c"}]
+        report = _make_quality_report(total_rows=100, expected_timestamps=100, negatives=negatives)
+        result = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert result["breakdown"]["negatives"] == 2
+
+    def test_with_gaps(self):
+        df = _make_standard_df(rows=100)
+        gaps = [{"after_row": 50, "from": pd.Timestamp("2024-01-01 12:00"),
+                 "to": pd.Timestamp("2024-01-01 13:00"), "missing_count": 3}]
+        report = _make_quality_report(total_rows=100, expected_timestamps=103,
+                                      gaps=gaps, missing_timestamps=3)
+        result = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert result["breakdown"]["timestamp_gaps"] >= 3
+
+    def test_rating_tiers(self):
+        """Test that different flag percentages produce correct rating tiers."""
+        df = _make_standard_df(rows=100)
+        # 2% flagged -> Excellent
+        report = _make_quality_report(total_rows=100, expected_timestamps=100,
+                                      negatives=[{"row": i, "value": -1, "column": "c"} for i in range(2)])
+        r = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert r["rating"] == "Excellent"
+
+    def test_empty_dataframe(self):
+        df = pd.DataFrame({"Date & Time": [], "Consumption (kW)": []})
+        report = _make_quality_report(total_rows=0, expected_timestamps=0)
+        result = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert result["pct"] == 0.0
+
+    def test_critical_quality(self):
+        """Many issues should produce Critical rating."""
+        dates = pd.date_range("2024-01-01", freq="15min", periods=100)
+        # 40% NaN
+        values = list(range(60)) + [np.nan] * 40
+        df = pd.DataFrame({"Date & Time": dates, "Consumption (kW)": values})
+        report = _make_quality_report(total_rows=100, expected_timestamps=100)
+        result = calculate_untrustworthiness(df, report, {"low": 0, "medium": 0, "high": 0, "total": 0}, [])
+        assert result["rating"] == "Critical"
+        assert result["color_tier"] == "red"
+
+
+# ---------------------------------------------------------------------------
+# TestGenerateRecommendations
+# ---------------------------------------------------------------------------
+
+class TestGenerateRecommendations:
+    def test_clean_data_no_critical(self):
+        report = _make_quality_report()
+        outlier_class = {"low": 0, "medium": 0, "high": 0, "total": 0}
+        temporal = {"gaps_count": 0, "missing_timestamps": 0, "duplicates_count": 0}
+        untrust = {"pct": 0.0, "flagged": 0, "total": 100, "rating": "Excellent", "color_tier": "green"}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        assert len(recs) >= 1
+        # Should be a general "excellent" message
+        assert recs[0]["category"] == "General"
+
+    def test_negative_values_recommendation(self):
+        report = _make_quality_report(negatives=[{"row": 0, "value": -5, "column": "Consumption (kW)"}])
+        outlier_class = {"low": 0, "medium": 0, "high": 0, "total": 0}
+        temporal = {"gaps_count": 0, "missing_timestamps": 0, "duplicates_count": 0}
+        untrust = {"pct": 1.0}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        neg_recs = [r for r in recs if r["category"] == "Negative Values"]
+        assert len(neg_recs) == 1
+        assert neg_recs[0]["priority"] == 1
+
+    def test_gap_recommendation(self):
+        gaps = [{"after_row": 50, "from": pd.Timestamp("2024-01-01"),
+                 "to": pd.Timestamp("2024-01-02"), "missing_count": 10}]
+        report = _make_quality_report(gaps=gaps, missing_timestamps=10)
+        outlier_class = {"low": 0, "medium": 0, "high": 0, "total": 0}
+        temporal = {"gaps_count": 1, "missing_timestamps": 10, "duplicates_count": 0}
+        untrust = {"pct": 10.0}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        gap_recs = [r for r in recs if r["category"] == "Timestamp Gaps"]
+        assert len(gap_recs) == 1
+
+    def test_missing_values_recommendation(self):
+        report = _make_quality_report(missing_values={"Consumption (kW)": {"count": 15, "rows": list(range(15))}})
+        outlier_class = {"low": 0, "medium": 0, "high": 0, "total": 0}
+        temporal = {"gaps_count": 0, "missing_timestamps": 0, "duplicates_count": 0}
+        untrust = {"pct": 15.0}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        mv_recs = [r for r in recs if r["category"] == "Missing Values"]
+        assert len(mv_recs) == 1
+
+    def test_duplicate_recommendation(self):
+        dups = [{"timestamp": pd.Timestamp("2024-01-01"), "row_indices": [0, 1]}]
+        report = _make_quality_report(duplicates=dups)
+        outlier_class = {"low": 0, "medium": 0, "high": 0, "total": 0}
+        temporal = {"gaps_count": 0, "missing_timestamps": 0, "duplicates_count": 1}
+        untrust = {"pct": 2.0}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        dup_recs = [r for r in recs if r["category"] == "Duplicate Timestamps"]
+        assert len(dup_recs) == 1
+
+    def test_high_outlier_recommendation(self):
+        outliers = [{"value": 200, "median": 10, "type": "high", "row": 5, "column": "c"}]
+        report = _make_quality_report(outliers=outliers)
+        outlier_class = {"low": 0, "medium": 0, "high": 1, "total": 1}
+        temporal = {"gaps_count": 0, "missing_timestamps": 0, "duplicates_count": 0}
+        untrust = {"pct": 1.0}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        severe_recs = [r for r in recs if r["category"] == "Severe Outliers"]
+        assert len(severe_recs) == 1
+        assert severe_recs[0]["priority"] == 1
+
+    def test_spike_recommendation(self):
+        report = _make_quality_report()
+        outlier_class = {"low": 0, "medium": 0, "high": 0, "total": 0}
+        temporal = {"gaps_count": 0, "missing_timestamps": 0, "duplicates_count": 0}
+        spikes = [{"row": 10, "column": "c", "value": 500, "rolling_avg": 10}]
+        untrust = {"pct": 1.0}
+        recs = generate_recommendations(report, outlier_class, temporal, spikes, untrust)
+        spike_recs = [r for r in recs if r["category"] == "Consumption Spikes"]
+        assert len(spike_recs) == 1
+
+    def test_critical_general_recommendation(self):
+        report = _make_quality_report()
+        outlier_class = {"low": 0, "medium": 0, "high": 0, "total": 0}
+        temporal = {"gaps_count": 0, "missing_timestamps": 0, "duplicates_count": 0}
+        untrust = {"pct": 35.0}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        general = [r for r in recs if r["category"] == "General"]
+        assert len(general) >= 1
+        assert "re-exporting" in general[0]["message"]
+
+    def test_sorted_by_priority(self):
+        """Recommendations should be sorted by priority (1 first)."""
+        negatives = [{"row": 0, "value": -5, "column": "c"}]
+        gaps = [{"after_row": 50, "from": pd.Timestamp("2024-01-01"),
+                 "to": pd.Timestamp("2024-01-02"), "missing_count": 10}]
+        report = _make_quality_report(negatives=negatives, gaps=gaps, missing_timestamps=10)
+        outlier_class = {"low": 2, "medium": 0, "high": 0, "total": 2}
+        temporal = {"gaps_count": 1, "missing_timestamps": 10, "duplicates_count": 0}
+        untrust = {"pct": 15.0}
+        recs = generate_recommendations(report, outlier_class, temporal, [], untrust)
+        priorities = [r["priority"] for r in recs]
+        assert priorities == sorted(priorities)

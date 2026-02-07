@@ -47,6 +47,7 @@ COLORS = {
     "success": "#28A745",      # Green
     "warning": "#FFC107",      # Yellow
     "text_dark": "#1A1A2E",    # Dark text
+    "orange": "#FF8C00",       # Orange (poor quality)
 }
 
 VALID_UNITS = ["W", "kW", "Wh", "kWh", "MWh", "MW"]
@@ -796,7 +797,76 @@ class EnergyParserGUI:
                               breakdown,
                               self._status_color(total, 0, 5, higher_is_better=False))
 
-        # Detailed results (expandable text)
+        # Row 3: Untrustworthiness Score (spanning full width)
+        untrust = kpi.get("untrustworthiness", {})
+        if untrust:
+            u_pct = untrust["pct"]
+            tier = untrust["color_tier"]
+            tier_colors = {
+                "green": COLORS["success"],
+                "yellow": COLORS["warning"],
+                "orange": COLORS["orange"],
+                "red": COLORS["secondary"],
+            }
+            u_color = tier_colors.get(tier, COLORS["primary"])
+
+            untrust_frame = tk.Frame(self.kpi_frame, bg=COLORS["white"],
+                                     relief=tk.FLAT, bd=1,
+                                     highlightbackground=COLORS["light_gray"],
+                                     highlightthickness=1)
+            untrust_frame.grid(row=3, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
+
+            # Colored top bar
+            bar = tk.Frame(untrust_frame, bg=u_color, height=4)
+            bar.pack(fill=tk.X)
+
+            untrust_content = tk.Frame(untrust_frame, bg=COLORS["white"])
+            untrust_content.pack(fill=tk.X, padx=12, pady=8)
+
+            tk.Label(untrust_content, text="Untrustworthiness Score",
+                     font=("Segoe UI", 8),
+                     bg=COLORS["white"], fg=COLORS["light_gray"]).pack(anchor=tk.W)
+
+            score_row = tk.Frame(untrust_content, bg=COLORS["white"])
+            score_row.pack(fill=tk.X)
+
+            tk.Label(score_row, text=f"{u_pct}%",
+                     font=("Segoe UI", 20, "bold"),
+                     bg=COLORS["white"], fg=u_color).pack(side=tk.LEFT)
+
+            tk.Label(score_row, text=f"  {untrust['rating']}",
+                     font=("Segoe UI", 12, "bold"),
+                     bg=COLORS["white"], fg=u_color).pack(side=tk.LEFT, pady=(4, 0))
+
+            detail_str = (f"{u_pct}% of data flagged as unreliable "
+                          f"({untrust['flagged']} out of {untrust['total']} records)")
+            tk.Label(untrust_content, text=detail_str,
+                     font=("Segoe UI", 9),
+                     bg=COLORS["white"], fg=COLORS["text_dark"]).pack(anchor=tk.W, pady=(2, 0))
+
+            # Breakdown chips
+            bk = untrust.get("breakdown", {})
+            if any(v > 0 for v in bk.values()):
+                chip_frame = tk.Frame(untrust_content, bg=COLORS["white"])
+                chip_frame.pack(anchor=tk.W, pady=(4, 0))
+                chip_labels = {
+                    "missing_values": "Missing",
+                    "outliers": "Outliers",
+                    "timestamp_gaps": "Gaps",
+                    "negatives": "Negatives",
+                    "duplicates": "Duplicates",
+                    "spikes": "Spikes",
+                }
+                for key, label in chip_labels.items():
+                    count = bk.get(key, 0)
+                    if count > 0:
+                        chip = tk.Label(chip_frame, text=f" {label}: {count} ",
+                                        font=("Segoe UI", 8),
+                                        bg=COLORS["bg"], fg=COLORS["text_dark"],
+                                        relief=tk.FLAT, padx=4, pady=1)
+                        chip.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Detailed results
         if kpi.get("detailed_results"):
             tk.Label(self.kpi_detail_frame, text="Detailed Validation Results",
                      font=("Segoe UI", 10, "bold"),
@@ -818,6 +888,59 @@ class EnergyParserGUI:
                 detail_text.insert(tk.END, f"{r['name']}: {r['details']}\n")
 
             detail_text.config(state=tk.DISABLED)
+
+        # Recommendations
+        recs = kpi.get("recommendations", [])
+        if recs:
+            tk.Label(self.kpi_detail_frame, text="Data Quality Recommendations",
+                     font=("Segoe UI", 10, "bold"),
+                     bg=COLORS["white"], fg=COLORS["primary"]).pack(anchor=tk.W, pady=(12, 5))
+
+            rec_frame = tk.Frame(self.kpi_detail_frame, bg=COLORS["bg"],
+                                 padx=12, pady=10)
+            rec_frame.pack(fill=tk.X)
+
+            priority_colors = {
+                1: COLORS["secondary"],
+                2: COLORS["warning"],
+                3: COLORS["primary"],
+                4: COLORS["light_gray"],
+            }
+            priority_labels = {1: "CRITICAL", 2: "IMPORTANT", 3: "ADVISORY", 4: "INFO"}
+
+            for r in recs:
+                p = r["priority"]
+                p_color = priority_colors.get(p, COLORS["light_gray"])
+                p_label = priority_labels.get(p, "INFO")
+
+                rec_item = tk.Frame(rec_frame, bg=COLORS["white"],
+                                     relief=tk.FLAT, bd=1,
+                                     highlightbackground=COLORS["light_gray"],
+                                     highlightthickness=1)
+                rec_item.pack(fill=tk.X, pady=3)
+
+                # Left color accent bar
+                accent = tk.Frame(rec_item, bg=p_color, width=4)
+                accent.pack(side=tk.LEFT, fill=tk.Y)
+
+                rec_content = tk.Frame(rec_item, bg=COLORS["white"], padx=10, pady=6)
+                rec_content.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+                header_frame = tk.Frame(rec_content, bg=COLORS["white"])
+                header_frame.pack(anchor=tk.W)
+
+                tk.Label(header_frame, text=f"[{p_label}]",
+                         font=("Segoe UI", 8, "bold"),
+                         bg=COLORS["white"], fg=p_color).pack(side=tk.LEFT)
+
+                tk.Label(header_frame, text=f"  {r['category']}",
+                         font=("Segoe UI", 9, "bold"),
+                         bg=COLORS["white"], fg=COLORS["text_dark"]).pack(side=tk.LEFT)
+
+                tk.Label(rec_content, text=r["message"],
+                         font=("Segoe UI", 9),
+                         bg=COLORS["white"], fg=COLORS["text_dark"],
+                         wraplength=700, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
 
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""

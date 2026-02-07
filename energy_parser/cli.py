@@ -266,6 +266,24 @@ def display_kpi_dashboard(kpi: dict):
     table.add_row("Processing Accuracy", f"[{color}]{acc:.1f}%[/{color}]",
                   f"[{color}]{'PASS' if acc >= 95 else ('WARN' if acc >= 80 else 'FAIL')}[/{color}]")
 
+    # Untrustworthiness Score
+    untrust = kpi.get("untrustworthiness", {})
+    if untrust:
+        u_pct = untrust["pct"]
+        u_rating = untrust["rating"]
+        tier = untrust["color_tier"]
+        if tier == "green":
+            u_color = "bold green"
+        elif tier == "yellow":
+            u_color = "bold yellow"
+        elif tier == "orange":
+            u_color = "bold dark_orange"
+        else:
+            u_color = "bold red"
+        u_detail = f"{u_pct}% flagged ({untrust['flagged']} of {untrust['total']} records)"
+        table.add_row("Untrustworthiness", f"[{u_color}]{u_detail}[/{u_color}]",
+                      f"[{u_color}]{u_rating}[/{u_color}]")
+
     console.print(table)
 
     # Detailed results
@@ -285,6 +303,24 @@ def display_kpi_dashboard(kpi: dict):
             detail_table.add_row(r["name"], f"[{color}]{r['status']}[/{color}]", r["details"])
 
         console.print(detail_table)
+
+    # Recommendations
+    recs = kpi.get("recommendations", [])
+    if recs:
+        rec_panel_lines = []
+        priority_labels = {1: "CRITICAL", 2: "IMPORTANT", 3: "ADVISORY", 4: "INFO"}
+        priority_colors = {1: "bold red", 2: "bold yellow", 3: "cyan", 4: "dim"}
+        for r in recs:
+            p = r["priority"]
+            label = priority_labels.get(p, "INFO")
+            color = priority_colors.get(p, "dim")
+            rec_panel_lines.append(
+                f"[{color}][{label}][/{color}] [bold]{r['category']}[/bold]\n"
+                f"  {r['message']}\n"
+            )
+        panel_content = "\n".join(rec_panel_lines)
+        console.print(Panel(panel_content, title="Data Quality Recommendations",
+                            border_style="cyan", expand=True))
 
 
 def run():
