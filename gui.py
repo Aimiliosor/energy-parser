@@ -35,6 +35,8 @@ from energy_parser.corrector import (
 )
 from energy_parser.exporter import save_xlsx
 from energy_parser.data_validator import run_validation
+from energy_parser.statistics import run_statistical_analysis
+from energy_parser.report_generator import generate_pdf_report, generate_seasonal_chart
 
 
 # Color Palette
@@ -182,6 +184,7 @@ class EnergyParserGUI:
         self.hours_per_interval = 1.0
         self.granularity_label = "unknown"
         self.kpi_data = None
+        self.stats_result = None
 
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
@@ -420,6 +423,7 @@ class EnergyParserGUI:
         self.create_actions_section()
         self.create_results_section()
         self.create_kpi_section()
+        self.create_statistics_section()
         self.create_tools_section()
 
         # Footer
@@ -942,9 +946,266 @@ class EnergyParserGUI:
                          bg=COLORS["white"], fg=COLORS["text_dark"],
                          wraplength=700, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
 
+    def create_statistics_section(self):
+        """Create the statistical analysis section."""
+        content = self.create_card(self.content_frame, "7. Statistical Analysis")
+
+        # Checkbox grid
+        checkbox_frame = tk.Frame(content, bg=COLORS["white"])
+        checkbox_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.stat_vars = {
+            "total_kwh": tk.BooleanVar(value=True),
+            "mean_kw": tk.BooleanVar(value=True),
+            "median_kw": tk.BooleanVar(value=True),
+            "std_kw": tk.BooleanVar(value=True),
+            "min_max_kw": tk.BooleanVar(value=True),
+            "peak_times": tk.BooleanVar(value=True),
+            "monthly_totals": tk.BooleanVar(value=True),
+            "daily_avg_kwh": tk.BooleanVar(value=True),
+            "seasonal_profile": tk.BooleanVar(value=True),
+        }
+
+        checkbox_labels = {
+            "total_kwh": "Total Energy (kWh)",
+            "mean_kw": "Mean Power (kW)",
+            "median_kw": "Median Power (kW)",
+            "std_kw": "Std Deviation (kW)",
+            "min_max_kw": "Min / Max Power",
+            "peak_times": "Peak / Off-Peak Times",
+            "monthly_totals": "Monthly Totals",
+            "daily_avg_kwh": "Daily Average (kWh)",
+            "seasonal_profile": "Seasonal Weekly Profile",
+        }
+
+        keys = list(checkbox_labels.keys())
+        for i, key in enumerate(keys):
+            row, col = divmod(i, 3)
+            cb = tk.Checkbutton(checkbox_frame, text=checkbox_labels[key],
+                                variable=self.stat_vars[key],
+                                font=("Segoe UI", 9),
+                                bg=COLORS["white"], fg=COLORS["text_dark"],
+                                activebackground=COLORS["white"],
+                                selectcolor=COLORS["white"])
+            cb.grid(row=row, column=col, sticky=tk.W, padx=10, pady=2)
+
+        # Button row
+        btn_row = tk.Frame(content, bg=COLORS["white"])
+        btn_row.pack(fill=tk.X, pady=5)
+
+        select_all_btn = ModernButton(btn_row, "Select All",
+                                       command=self._stats_select_all,
+                                       bg=COLORS["light_gray"],
+                                       fg=COLORS["primary"],
+                                       width=110, height=35)
+        select_all_btn.pack(side=tk.LEFT, padx=5)
+
+        clear_all_btn = ModernButton(btn_row, "Clear All",
+                                      command=self._stats_clear_all,
+                                      bg=COLORS["light_gray"],
+                                      fg=COLORS["primary"],
+                                      width=110, height=35)
+        clear_all_btn.pack(side=tk.LEFT, padx=5)
+
+        self.run_analysis_btn = ModernButton(btn_row, "Run Analysis",
+                                              command=self.run_analysis,
+                                              bg=COLORS["primary"],
+                                              width=150, height=35)
+        self.run_analysis_btn.pack(side=tk.LEFT, padx=5)
+
+        self.generate_pdf_btn = ModernButton(btn_row, "Generate PDF Report",
+                                              command=self.generate_report,
+                                              bg=COLORS["secondary"],
+                                              width=180, height=35)
+        self.generate_pdf_btn.pack(side=tk.LEFT, padx=5)
+
+        # Results text area
+        self.stats_text = tk.Text(content, height=10, width=100,
+                                   font=("Consolas", 9),
+                                   bg=COLORS["bg"], fg=COLORS["text_dark"],
+                                   relief=tk.FLAT, padx=10, pady=10)
+        self.stats_text.pack(fill=tk.X, pady=(10, 0))
+        self.stats_text.tag_configure("header", font=("Consolas", 10, "bold"),
+                                       foreground=COLORS["primary"])
+        self.stats_text.tag_configure("metric", font=("Consolas", 9, "bold"),
+                                       foreground=COLORS["text_dark"])
+        self.stats_text.config(state=tk.DISABLED)
+
+        # Chart display frame
+        self.chart_frame = tk.Frame(content, bg=COLORS["white"])
+        self.chart_frame.pack(fill=tk.X, pady=5)
+
+        # Keep references to chart images to prevent GC
+        self._chart_images = []
+
+    def _stats_select_all(self):
+        for var in self.stat_vars.values():
+            var.set(True)
+
+    def _stats_clear_all(self):
+        for var in self.stat_vars.values():
+            var.set(False)
+
+    def run_analysis(self):
+        """Run statistical analysis on transformed data."""
+        if self.transformed_df is None:
+            messagebox.showwarning("Warning",
+                                    "Please transform data first (Step 4).")
+            return
+
+        # Collect selected metrics
+        selected = [k for k, v in self.stat_vars.items() if v.get()]
+        if not selected:
+            messagebox.showwarning("Warning", "Please select at least one metric.")
+            return
+
+        self.update_progress(20, "Running statistical analysis...")
+
+        try:
+            self.stats_result = run_statistical_analysis(
+                self.transformed_df, self.hours_per_interval, selected)
+
+            self.update_progress(60, "Formatting results...")
+
+            # Display summary in stats_text
+            self.stats_text.config(state=tk.NORMAL)
+            self.stats_text.delete(1.0, tk.END)
+
+            yearly = self.stats_result.get("yearly", {})
+            for col_name, col_stats in yearly.items():
+                self.stats_text.insert(tk.END, f"\n{col_name}\n", "header")
+                self.stats_text.insert(tk.END, "-" * 40 + "\n")
+
+                if "total_kwh" in selected:
+                    self.stats_text.insert(tk.END, "  Total Energy: ", "metric")
+                    self.stats_text.insert(tk.END, f"{col_stats['total_kwh']:,.2f} kWh\n")
+                if "mean_kw" in selected:
+                    self.stats_text.insert(tk.END, "  Mean Power: ", "metric")
+                    self.stats_text.insert(tk.END, f"{col_stats['mean_kw']:.2f} kW\n")
+                if "median_kw" in selected:
+                    self.stats_text.insert(tk.END, "  Median Power: ", "metric")
+                    self.stats_text.insert(tk.END, f"{col_stats['median_kw']:.2f} kW\n")
+                if "std_kw" in selected:
+                    self.stats_text.insert(tk.END, "  Std Deviation: ", "metric")
+                    self.stats_text.insert(tk.END, f"{col_stats['std_kw']:.2f} kW\n")
+                if "min_max_kw" in selected:
+                    self.stats_text.insert(tk.END, "  Min / Max: ", "metric")
+                    self.stats_text.insert(tk.END,
+                        f"{col_stats['min_kw']:.2f} / {col_stats['max_kw']:.2f} kW\n")
+                if "peak_times" in selected:
+                    self.stats_text.insert(tk.END, "  Peak Time: ", "metric")
+                    self.stats_text.insert(tk.END, f"{col_stats['peak_timestamp']}\n")
+                    self.stats_text.insert(tk.END, "  Off-Peak Time: ", "metric")
+                    self.stats_text.insert(tk.END, f"{col_stats['off_peak_timestamp']}\n")
+                if "daily_avg_kwh" in selected:
+                    self.stats_text.insert(tk.END, "  Daily Average: ", "metric")
+                    self.stats_text.insert(tk.END, f"{col_stats['daily_avg_kwh']:,.2f} kWh\n")
+                if "monthly_totals" in selected:
+                    self.stats_text.insert(tk.END, "\n  Monthly Totals (kWh):\n", "metric")
+                    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                    monthly = col_stats.get("monthly_totals", {})
+                    for m in range(1, 13):
+                        val = monthly.get(m, 0)
+                        self.stats_text.insert(tk.END,
+                            f"    {month_names[m-1]}: {val:>10,.2f}\n")
+
+            self.stats_text.config(state=tk.DISABLED)
+
+            self.update_progress(80, "Rendering charts...")
+
+            # Render seasonal charts if selected
+            self._chart_images.clear()
+            for w in self.chart_frame.winfo_children():
+                w.destroy()
+
+            if "seasonal_profile" in selected:
+                seasonal = self.stats_result.get("seasonal", {})
+                for col_name, seasons_dict in seasonal.items():
+                    for season_name in ["Winter", "Spring", "Summer", "Autumn"]:
+                        profile_df = seasons_dict.get(season_name)
+                        if profile_df is None:
+                            continue
+
+                        chart_bytes = generate_seasonal_chart(
+                            profile_df, col_name, season_name)
+
+                        # Convert to tkinter-displayable image
+                        img = Image.open(io.BytesIO(chart_bytes))
+                        # Scale down for display
+                        display_width = 750
+                        ratio = display_width / img.width
+                        display_height = int(img.height * ratio)
+                        img = img.resize((display_width, display_height),
+                                          Image.Resampling.LANCZOS)
+                        photo = ImageTk.PhotoImage(img)
+                        self._chart_images.append(photo)
+
+                        label = tk.Label(self.chart_frame, image=photo,
+                                          bg=COLORS["white"])
+                        label.pack(pady=3)
+
+            self.update_progress(100, "Analysis complete!")
+
+        except Exception as e:
+            self.update_progress(0, "Error during analysis")
+            messagebox.showerror("Error", f"Statistical analysis failed:\n{str(e)}")
+
+    def generate_report(self):
+        """Generate a branded PDF report."""
+        if self.stats_result is None:
+            messagebox.showwarning("Warning",
+                                    "Please run analysis first.")
+            return
+
+        # Default filename based on input file
+        if self.file_path:
+            default_name = os.path.splitext(
+                os.path.basename(self.file_path))[0] + "_report.pdf"
+            default_dir = os.path.dirname(self.file_path)
+        else:
+            default_name = "energy_report.pdf"
+            default_dir = os.getcwd()
+
+        save_path = filedialog.asksaveasfilename(
+            initialdir=default_dir,
+            initialfile=default_name,
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")])
+
+        if not save_path:
+            return
+
+        self.update_progress(30, "Generating PDF report...")
+
+        try:
+            # Determine logo path
+            logo_path = os.path.join(os.path.dirname(__file__),
+                                      "Logo_new_white.png")
+            if not os.path.exists(logo_path):
+                logo_path = None
+
+            result_path = generate_pdf_report(
+                output_path=save_path,
+                stats_result=self.stats_result,
+                kpi_data=self.kpi_data,
+                logo_path=logo_path,
+                quality_report=self.quality_report,
+            )
+
+            self.update_progress(100, "PDF report generated!")
+
+            if messagebox.askyesno("Report Generated",
+                                    f"PDF saved to:\n{result_path}\n\nOpen the file?"):
+                os.startfile(result_path)
+
+        except Exception as e:
+            self.update_progress(0, "Error generating report")
+            messagebox.showerror("Error", f"PDF generation failed:\n{str(e)}")
+
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""
-        content = self.create_card(self.content_frame, "7. Developer Tools")
+        content = self.create_card(self.content_frame, "8. Developer Tools")
 
         tools_row = tk.Frame(content, bg=COLORS["white"])
         tools_row.pack(fill=tk.X)
