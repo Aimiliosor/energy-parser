@@ -36,6 +36,7 @@ from energy_parser.corrector import (
 from energy_parser.exporter import save_xlsx
 from energy_parser.data_validator import run_validation
 from energy_parser.statistics import run_statistical_analysis
+from energy_parser.utils import build_output_filename
 from energy_parser.report_generator import (
     generate_pdf_report, generate_seasonal_chart,
     generate_peak_timeline_chart, generate_peak_heatmap,
@@ -207,6 +208,10 @@ class EnergyParserGUI:
         self.prod_col_var = tk.StringVar(value="none")
         self.cons_unit_var = tk.StringVar(value="kW")
         self.prod_unit_var = tk.StringVar(value="kW")
+
+        # Site information
+        self.site_name_var = tk.StringVar(value="")
+        self.grid_capacity_var = tk.StringVar(value="")
 
         # Image references (keep references to prevent garbage collection)
         self.bg_image_original = None
@@ -432,6 +437,7 @@ class EnergyParserGUI:
 
         # Create sections
         self.create_file_section()
+        self.create_site_info_section()
         self.create_preview_section()
         self.create_config_section()
         self.create_actions_section()
@@ -568,9 +574,32 @@ class EnergyParserGUI:
                                         bg=COLORS["white"], fg=COLORS["text_dark"])
         self.file_info_label.pack(anchor=tk.W, pady=5)
 
+    def create_site_info_section(self):
+        """Create the site information section."""
+        content = self.create_card(self.content_frame, "2. Site Information")
+
+        info_grid = tk.Frame(content, bg=COLORS["white"])
+        info_grid.pack(fill=tk.X)
+
+        # Row 0: Site Name
+        tk.Label(info_grid, text="Site Name:",
+                font=("Segoe UI", 10), bg=COLORS["white"]).grid(
+                    row=0, column=0, sticky=tk.W, pady=5)
+        site_entry = ttk.Entry(info_grid, textvariable=self.site_name_var,
+                               width=40, font=("Segoe UI", 10))
+        site_entry.grid(row=0, column=1, padx=10, pady=5, sticky=tk.W)
+
+        # Row 1: Grid Connection Capacity
+        tk.Label(info_grid, text="Grid Connection Capacity (kW):",
+                font=("Segoe UI", 10), bg=COLORS["white"]).grid(
+                    row=1, column=0, sticky=tk.W, pady=5)
+        capacity_entry = ttk.Entry(info_grid, textvariable=self.grid_capacity_var,
+                                   width=15, font=("Segoe UI", 10))
+        capacity_entry.grid(row=1, column=1, padx=10, pady=5, sticky=tk.W)
+
     def create_preview_section(self):
         """Create the data preview section."""
-        content = self.create_card(self.content_frame, "2. Data Preview")
+        content = self.create_card(self.content_frame, "3. Data Preview")
 
         # Preview table
         tree_frame = tk.Frame(content, bg=COLORS["white"])
@@ -602,7 +631,7 @@ class EnergyParserGUI:
 
     def create_config_section(self):
         """Create the configuration section."""
-        content = self.create_card(self.content_frame, "3. Column Configuration")
+        content = self.create_card(self.content_frame, "4. Column Configuration")
 
         # Grid for column selection
         config_grid = tk.Frame(content, bg=COLORS["white"])
@@ -649,7 +678,7 @@ class EnergyParserGUI:
 
     def create_actions_section(self):
         """Create the actions section."""
-        content = self.create_card(self.content_frame, "4. Process Data")
+        content = self.create_card(self.content_frame, "5. Process Data")
 
         # Buttons row
         btn_row = tk.Frame(content, bg=COLORS["white"])
@@ -697,7 +726,7 @@ class EnergyParserGUI:
 
     def create_results_section(self):
         """Create the results display section."""
-        content = self.create_card(self.content_frame, "5. Results & Quality Report")
+        content = self.create_card(self.content_frame, "6. Results & Quality Report")
 
         # Results text area
         self.results_text = tk.Text(content, height=12, width=100,
@@ -717,7 +746,7 @@ class EnergyParserGUI:
 
     def create_kpi_section(self):
         """Create the KPI dashboard section."""
-        content = self.create_card(self.content_frame, "6. KPI Dashboard")
+        content = self.create_card(self.content_frame, "7. KPI Dashboard")
 
         self.kpi_placeholder = tk.Label(
             content, text="Run Quality Check to see KPI dashboard",
@@ -983,7 +1012,7 @@ class EnergyParserGUI:
 
     def create_statistics_section(self):
         """Create the statistical analysis section."""
-        content = self.create_card(self.content_frame, "7. Statistical Analysis")
+        content = self.create_card(self.content_frame, "8. Statistical Analysis")
 
         # Checkbox grid
         checkbox_frame = tk.Frame(content, bg=COLORS["white"])
@@ -1181,9 +1210,18 @@ class EnergyParserGUI:
                         continue
 
                     self.stats_text.insert(tk.END, "\n  Top Peaks:\n", "metric")
+                    # Parse grid capacity for % display
+                    try:
+                        _grid_cap = float(self.grid_capacity_var.get().strip())
+                    except (ValueError, TypeError):
+                        _grid_cap = None
                     for p in top_peaks:
+                        grid_pct_str = ""
+                        if _grid_cap and _grid_cap > 0:
+                            grid_pct = p['value'] / _grid_cap * 100
+                            grid_pct_str = f"  ({grid_pct:.1f}% of grid)"
                         self.stats_text.insert(tk.END,
-                            f"    #{p['rank']}  {p['value']:>8,.1f} kW  "
+                            f"    #{p['rank']}  {p['value']:>8,.1f} kW{grid_pct_str}  "
                             f"{p['timestamp']}  {p['day_of_week']:<9s}  "
                             f"Duration: {p['duration_hours']:.1f}h\n")
 
@@ -1403,13 +1441,19 @@ class EnergyParserGUI:
                                     "Please run analysis first.")
             return
 
-        # Default filename based on input file
-        if self.file_path:
+        # Default filename based on site name
+        site_name = self.site_name_var.get().strip()
+        if site_name:
+            default_name = build_output_filename(site_name, "EnergyAnalysis", "pdf")
+        elif self.file_path:
             default_name = os.path.splitext(
                 os.path.basename(self.file_path))[0] + "_report.pdf"
-            default_dir = os.path.dirname(self.file_path)
         else:
             default_name = "energy_report.pdf"
+
+        if self.file_path:
+            default_dir = os.path.dirname(self.file_path)
+        else:
             default_dir = os.getcwd()
 
         save_path = filedialog.asksaveasfilename(
@@ -1429,12 +1473,24 @@ class EnergyParserGUI:
             if not os.path.exists(logo_path):
                 logo_path = None
 
+            # Build site_info dict
+            site_info = None
+            s_name = self.site_name_var.get().strip()
+            g_cap = self.grid_capacity_var.get().strip()
+            if s_name:
+                site_info = {"site_name": s_name}
+                try:
+                    site_info["grid_capacity_kw"] = float(g_cap)
+                except (ValueError, TypeError):
+                    pass
+
             result_path = generate_pdf_report(
                 output_path=save_path,
                 stats_result=self.stats_result,
                 kpi_data=self.kpi_data,
                 logo_path=logo_path,
                 quality_report=self.quality_report,
+                site_info=site_info,
             )
 
             self.update_progress(100, "PDF report generated!")
@@ -1449,7 +1505,7 @@ class EnergyParserGUI:
 
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""
-        content = self.create_card(self.content_frame, "8. Developer Tools")
+        content = self.create_card(self.content_frame, "9. Developer Tools")
 
         tools_row = tk.Frame(content, bg=COLORS["white"])
         tools_row.pack(fill=tk.X)
@@ -1690,6 +1746,24 @@ class EnergyParserGUI:
         """Transform the loaded data."""
         if self.df is None:
             messagebox.showerror("Error", "Please load a file first.")
+            return
+
+        # Validate site information
+        site_name = self.site_name_var.get().strip()
+        if not site_name:
+            messagebox.showerror("Error",
+                "Please enter a Site Name in section 2 (Site Information).")
+            return
+
+        grid_cap_str = self.grid_capacity_var.get().strip()
+        try:
+            grid_cap = float(grid_cap_str)
+            if grid_cap <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            messagebox.showerror("Error",
+                "Please enter a valid positive number for Grid Connection "
+                "Capacity (kW) in section 2 (Site Information).")
             return
 
         self.update_progress(20, "Transforming data...")
@@ -2026,7 +2100,11 @@ class EnergyParserGUI:
             return
 
         # Ask for save location
-        default_name = os.path.splitext(os.path.basename(self.file_path))[0] + "_parsed.xlsx"
+        site_name = self.site_name_var.get().strip()
+        if site_name:
+            default_name = build_output_filename(site_name, "EnergyAnalysis", "xlsx")
+        else:
+            default_name = os.path.splitext(os.path.basename(self.file_path))[0] + "_parsed.xlsx"
         default_dir = os.path.dirname(self.file_path)
 
         save_path = filedialog.asksaveasfilename(

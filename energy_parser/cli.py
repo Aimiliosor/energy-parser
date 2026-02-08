@@ -19,6 +19,7 @@ from energy_parser.quality_check import run_quality_check
 from energy_parser.data_validator import run_validation
 from energy_parser.corrector import run_corrections
 from energy_parser.exporter import save_xlsx
+from energy_parser.utils import build_output_filename
 
 console = Console()
 
@@ -372,6 +373,28 @@ def run():
             # No date column found - prompt user
             granularity_label, hours_per_interval = prompt_granularity_selection(None)
 
+        # ===== Site Information =====
+        console.print("\n[bold cyan]Site Information[/bold cyan]")
+
+        while True:
+            site_name = Prompt.ask("  Site Name")
+            if site_name.strip():
+                site_name = site_name.strip()
+                break
+            console.print("  [red]Site name is required.[/red]")
+
+        while True:
+            grid_cap_str = Prompt.ask("  Grid Connection Capacity (kW)")
+            try:
+                grid_capacity_kw = float(grid_cap_str)
+                if grid_capacity_kw > 0:
+                    break
+                console.print("  [red]Please enter a positive number.[/red]")
+            except ValueError:
+                console.print("  [red]Please enter a valid number.[/red]")
+
+        console.print(f"  [green]Site: {site_name} | Grid capacity: {grid_capacity_kw:,.1f} kW[/green]")
+
         # ===== Phase 2: Column Identification =====
         selection = prompt_column_selection(df, analysis)
 
@@ -388,9 +411,9 @@ def run():
         )
 
         # Save initial XLSX
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
         output_dir = os.path.dirname(file_path)
-        initial_path = os.path.join(output_dir, f"{base_name}_parsed.xlsx")
+        initial_name = build_output_filename(site_name, "parsed", "xlsx")
+        initial_path = os.path.join(output_dir, initial_name)
         save_xlsx(transformed, initial_path, is_final=False)
 
         # ===== Phase 4: Quality Check =====
@@ -446,7 +469,7 @@ def run():
             display_kpi_dashboard(post_kpi)
 
         # Ask for output filename
-        default_clean = f"{base_name}_clean.xlsx"
+        default_clean = build_output_filename(site_name, "EnergyAnalysis", "xlsx")
         clean_name = Prompt.ask("  Output file name", default=default_clean)
         clean_path_out = os.path.join(output_dir, clean_name)
 

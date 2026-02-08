@@ -468,29 +468,42 @@ def _empty_chart(message: str) -> bytes:
     return buf.read()
 
 
-def _build_peak_summary_table(peak_data: dict) -> Table:
+def _build_peak_summary_table(peak_data: dict,
+                               grid_capacity_kw: float | None = None) -> Table:
     """Build a formatted table of top peaks."""
     top_peaks = peak_data.get("top_peaks", [])
     if not top_peaks:
         return Table([["No peaks detected"]], colWidths=[400])
 
     header = ["Rank", "Date & Time", "Day", "Month",
-              "Value (kW)", "Duration (h)", "Rise (kW/h)", "Fall (kW/h)"]
+              "Value (kW)"]
+    if grid_capacity_kw:
+        header.append("% Grid")
+    header.extend(["Duration (h)", "Rise (kW/h)", "Fall (kW/h)"])
     rows = [header]
 
     for p in top_peaks:
-        rows.append([
+        row = [
             f"#{p['rank']}",
             p["timestamp"],
             p["day_of_week"],
             p["month"],
             f"{p['value']:,.1f}",
+        ]
+        if grid_capacity_kw:
+            pct = p['value'] / grid_capacity_kw * 100
+            row.append(f"{pct:.1f}%")
+        row.extend([
             f"{p['duration_hours']:.1f}",
             f"{p['rise_rate']:,.1f}",
             f"{p['fall_rate']:,.1f}",
         ])
+        rows.append(row)
 
-    col_widths = [35, 95, 60, 40, 60, 55, 60, 55]
+    if grid_capacity_kw:
+        col_widths = [30, 85, 50, 35, 55, 45, 50, 55, 50]
+    else:
+        col_widths = [35, 95, 60, 40, 60, 55, 60, 55]
     table = Table(rows, colWidths=col_widths)
 
     style_commands = [
@@ -513,7 +526,8 @@ def _build_peak_summary_table(peak_data: dict) -> Table:
     return table
 
 
-def _build_peak_characteristics_table(peak_data: dict) -> Table:
+def _build_peak_characteristics_table(peak_data: dict,
+                                       grid_capacity_kw: float | None = None) -> Table:
     """Build a table of peak characteristics and threshold analysis."""
     chars = peak_data.get("characteristics", {})
     thresholds = peak_data.get("thresholds", {})
@@ -536,6 +550,15 @@ def _build_peak_characteristics_table(peak_data: dict) -> Table:
         ["Time Above 95th Pct", f"{thresholds.get('time_above_p95_hours', 0):,.1f} hours"],
         ["Peak-to-Average Ratio", f"{thresholds.get('peak_to_avg_ratio', 0):.2f}x"],
     ]
+
+    # Add grid capacity comparison
+    if grid_capacity_kw and grid_capacity_kw > 0:
+        top_peaks = peak_data.get("top_peaks", [])
+        if top_peaks:
+            max_peak = max(p["value"] for p in top_peaks)
+            pct = max_peak / grid_capacity_kw * 100
+            rows.append(["Grid Connection Capacity", f"{grid_capacity_kw:,.1f} kW"])
+            rows.append(["Max Peak vs Grid Capacity", f"{pct:.1f}%"])
 
     # Add data filtering rows if applicable
     if filtering.get("filter_applied"):
@@ -567,7 +590,7 @@ def _build_peak_characteristics_table(peak_data: dict) -> Table:
 # PDF generation
 # ---------------------------------------------------------------------------
 
-def _header_footer(canvas, doc, logo_path=None):
+def _header_footer(canvas, doc, logo_path=None, site_name=None):
     """Draw header bar and footer on every page."""
     canvas.saveState()
     width, height = A4
@@ -587,9 +610,16 @@ def _header_footer(canvas, doc, logo_path=None):
 
     # Header title
     canvas.setFillColor(_RL_WHITE)
-    canvas.setFont("Helvetica-Bold", 14)
-    canvas.drawString(48 * mm, height - 17 * mm,
-                      "Spartacus — Energy Data Analysis Report")
+    if site_name:
+        canvas.setFont("Helvetica-Bold", 12)
+        canvas.drawString(48 * mm, height - 14 * mm,
+                          "Spartacus — Energy Data Analysis Report")
+        canvas.setFont("Helvetica", 9)
+        canvas.drawString(48 * mm, height - 20 * mm, site_name)
+    else:
+        canvas.setFont("Helvetica-Bold", 14)
+        canvas.drawString(48 * mm, height - 17 * mm,
+                          "Spartacus — Energy Data Analysis Report")
 
     # Header date
     canvas.setFont("Helvetica", 8)
@@ -746,8 +776,12 @@ def generate_pdf_report(output_path: str,
                          stats_result: dict,
                          kpi_data: dict | None = None,
                          logo_path: str | None = None,
-                         quality_report: dict | None = None) -> str:
+                         quality_report: dict | None = None,
+                         site_info: dict | None = None) -> str:
     """Generate branded PDF report using reportlab.
+
+    Args:
+        site_info: Optional dict with "site_name" and "grid_capacity_kw".
 
     Returns output_path on success.
     """
@@ -761,6 +795,41 @@ def generate_pdf_report(output_path: str,
     )
 
     story = []
+
+    # --- Site Information ---
+    if site_info:
+        story.append(_section_heading("Site Information"))
+        story.append(Spacer(1, 4 * mm))
+        site_rows = [
+            ["Field", "Value"],
+            ["Site Name", site_info.get("site_name", "N/A")],
+        ]
+        grid_cap = site_info.get("grid_capacity_kw")
+        if grid_cap is not None:
+            site_rows.append(["Grid Connection Capacity", f"{grid_cap:,.1f} kW"])
+        site_rows.append(["Report Date", datetime.now().strftime("%Y-%m-%d %H:%M")])
+
+        site_table = Table(site_rows, colWidths=[160, 260])
+        site_style = [
+            ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ALIGN", (0, 0), (0, -1), "LEFT"),
+            ("ALIGN", (1, 0), (1, -1), "LEFT"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ]
+        for i in range(1, len(site_rows)):
+            if i % 2 == 0:
+                site_style.append(("BACKGROUND", (0, i), (-1, i), _RL_BG))
+        site_table.setStyle(TableStyle(site_style))
+        story.append(site_table)
+        story.append(Spacer(1, 6 * mm))
 
     # --- KPI Summary ---
     if kpi_data:
@@ -828,12 +897,23 @@ def generate_pdf_report(output_path: str,
         story.append(_section_heading("Peak Consumption Analysis"))
         story.append(Spacer(1, 4 * mm))
 
+        # Extract grid capacity from site_info
+        _grid_cap = None
+        if site_info:
+            _grid_cap = site_info.get("grid_capacity_kw")
+
         for col_name, peak_data in peaks.items():
             if not peak_data.get("top_peaks"):
                 continue
 
             story.append(_body_text(f"<b>{col_name}</b>"))
             story.append(Spacer(1, 2 * mm))
+
+            # Grid capacity note
+            if _grid_cap and _grid_cap > 0:
+                story.append(_body_text(
+                    f"<i>Grid connection capacity: {_grid_cap:,.1f} kW.</i>"))
+                story.append(Spacer(1, 1 * mm))
 
             # Data filtering transparency note
             filtering = peak_data.get("data_filtering", {})
@@ -856,11 +936,13 @@ def generate_pdf_report(output_path: str,
                 "Top consumption peaks ranked by value, with duration "
                 "(time above 90% of peak value), rise and fall rates:"))
             story.append(Spacer(1, 2 * mm))
-            story.append(_build_peak_summary_table(peak_data))
+            story.append(_build_peak_summary_table(peak_data,
+                                                    grid_capacity_kw=_grid_cap))
             story.append(Spacer(1, 4 * mm))
 
             # Characteristics & thresholds table
-            story.append(_build_peak_characteristics_table(peak_data))
+            story.append(_build_peak_characteristics_table(peak_data,
+                                                            grid_capacity_kw=_grid_cap))
             story.append(Spacer(1, 4 * mm))
 
             # Charts
@@ -1033,8 +1115,11 @@ def generate_pdf_report(output_path: str,
             story.append(Spacer(1, 4 * mm))
 
     # Build PDF with header/footer
+    _site_name = site_info.get("site_name") if site_info else None
+
     def on_page(canvas, doc_ref):
-        _header_footer(canvas, doc_ref, logo_path=logo_path)
+        _header_footer(canvas, doc_ref, logo_path=logo_path,
+                        site_name=_site_name)
 
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
 
