@@ -23,6 +23,7 @@ ALL_METRIC_KEYS = [
     "min_max_kw", "peak_times", "monthly_totals",
     "daily_avg_kwh", "seasonal_profile", "peak_analysis",
     "frequency_histogram", "cumulative_distribution",
+    "peak_hour_frequency",
 ]
 
 MONTH_NAMES = [
@@ -622,6 +623,127 @@ def compute_cumulative_distribution(df: pd.DataFrame) -> dict:
     return result
 
 
+def compute_peak_hour_frequency(df: pd.DataFrame,
+                                 percentile_threshold: float = 90) -> dict:
+    """Count peak events (above percentile threshold) by hour of day.
+
+    Uses original data only when data_source column is present.
+
+    Returns dict keyed by column name:
+    {
+        "Consumption (kW)": {
+            "hourly_counts": list[int],        # 24 values, index=hour
+            "total_peaks": int,
+            "threshold_value": float,           # the kW value at the percentile
+            "percentile_used": float,
+            "peak_hour": int,                   # hour with most peaks
+            "peak_hour_count": int,
+            "peak_free_hours": list[int],       # hours with zero peaks
+            "concentration": {                  # busiest contiguous window
+                "start_hour": int,
+                "end_hour": int,
+                "pct": float,                   # % of peaks in that window
+            },
+            "avg_by_hour": list[float],         # mean kW per hour (all data)
+        }
+    }
+    """
+    result = {}
+    value_cols = _value_columns(df)
+    has_data_source = "data_source" in df.columns
+
+    for col in value_cols:
+        # Filter to original data for peak detection
+        if has_data_source:
+            analysis_df = df[df["data_source"] == "original"]
+        else:
+            analysis_df = df
+
+        series = analysis_df[col].dropna()
+        if len(series) < 5:
+            result[col] = _empty_peak_hour_result(percentile_threshold)
+            continue
+
+        threshold = float(np.percentile(series.values, percentile_threshold))
+        dt_col = pd.to_datetime(analysis_df["Date & Time"])
+
+        # Count peaks by hour
+        peak_mask = series >= threshold
+        peak_hours = dt_col.loc[peak_mask.index][peak_mask].dt.hour
+        hourly_counts = [0] * 24
+        for h in peak_hours:
+            hourly_counts[h] += 1
+
+        total_peaks = sum(hourly_counts)
+
+        # Peak hour (most frequent)
+        peak_hour = int(np.argmax(hourly_counts))
+        peak_hour_count = hourly_counts[peak_hour]
+
+        # Peak-free hours
+        peak_free_hours = [h for h in range(24) if hourly_counts[h] == 0]
+
+        # Concentration: find best contiguous window of N hours capturing most peaks
+        # Use a sliding window approach over all possible windows (wrapping around midnight)
+        best_pct = 0.0
+        best_start = 0
+        best_end = 0
+        if total_peaks > 0:
+            for window_size in range(3, 9):  # try 3-8 hour windows
+                for start in range(24):
+                    window_sum = sum(
+                        hourly_counts[(start + i) % 24]
+                        for i in range(window_size))
+                    pct = window_sum / total_peaks * 100
+                    if pct > best_pct:
+                        best_pct = pct
+                        best_start = start
+                        best_end = (start + window_size - 1) % 24
+
+        # Average consumption by hour (full dataset for context)
+        full_dt = pd.to_datetime(df["Date & Time"])
+        full_series = df[col].dropna()
+        avg_by_hour = [0.0] * 24
+        for h in range(24):
+            mask = full_dt.dt.hour == h
+            vals = full_series.loc[mask.index[mask]]
+            if len(vals) > 0:
+                avg_by_hour[h] = float(vals.mean())
+
+        result[col] = {
+            "hourly_counts": hourly_counts,
+            "total_peaks": total_peaks,
+            "threshold_value": round(threshold, 2),
+            "percentile_used": percentile_threshold,
+            "peak_hour": peak_hour,
+            "peak_hour_count": peak_hour_count,
+            "peak_free_hours": peak_free_hours,
+            "concentration": {
+                "start_hour": best_start,
+                "end_hour": best_end,
+                "pct": round(best_pct, 1),
+            },
+            "avg_by_hour": [round(v, 2) for v in avg_by_hour],
+        }
+
+    return result
+
+
+def _empty_peak_hour_result(percentile: float) -> dict:
+    """Return empty peak hour frequency result."""
+    return {
+        "hourly_counts": [0] * 24,
+        "total_peaks": 0,
+        "threshold_value": 0.0,
+        "percentile_used": percentile,
+        "peak_hour": 0,
+        "peak_hour_count": 0,
+        "peak_free_hours": list(range(24)),
+        "concentration": {"start_hour": 0, "end_hour": 0, "pct": 0.0},
+        "avg_by_hour": [0.0] * 24,
+    }
+
+
 def run_statistical_analysis(df: pd.DataFrame,
                               hours_per_interval: float,
                               selected_metrics: list[str] | None = None) -> dict:
@@ -668,11 +790,18 @@ def run_statistical_analysis(df: pd.DataFrame,
     else:
         cdf = {}
 
+    # Peak hour frequency
+    if "peak_hour_frequency" in selected_metrics:
+        peak_hours = compute_peak_hour_frequency(df)
+    else:
+        peak_hours = {}
+
     return {
         "yearly": yearly,
         "seasonal": seasonal,
         "peaks": peaks,
         "histogram": histogram,
         "cdf": cdf,
+        "peak_hours": peak_hours,
         "selected_metrics": selected_metrics,
     }

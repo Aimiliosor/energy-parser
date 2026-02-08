@@ -391,6 +391,67 @@ def generate_cdf_chart(cdf_data: dict, column_name: str,
     return buf.read()
 
 
+def generate_peak_hour_frequency_chart(peak_hour_data: dict,
+                                        column_name: str) -> bytes:
+    """Bar chart of peak event frequency by hour of day.
+
+    peak_hour_data: dict from compute_peak_hour_frequency()[column_name].
+    Returns PNG bytes.
+    """
+    hourly_counts = peak_hour_data.get("hourly_counts", [0] * 24)
+    avg_by_hour = peak_hour_data.get("avg_by_hour", [0.0] * 24)
+    threshold = peak_hour_data.get("threshold_value", 0)
+
+    if not any(c > 0 for c in hourly_counts):
+        return _empty_chart("No peak events detected")
+
+    hours = list(range(24))
+    max_count = max(hourly_counts)
+
+    fig, ax1 = plt.subplots(figsize=(8, 4), dpi=120)
+
+    # Bar colors: accent color for the highest-frequency hours
+    bar_colors = []
+    for c in hourly_counts:
+        if max_count > 0 and c >= max_count * 0.8:
+            bar_colors.append(BRAND_SECONDARY)
+        else:
+            bar_colors.append(BRAND_PRIMARY)
+
+    ax1.bar(hours, hourly_counts, color=bar_colors, edgecolor="white",
+            linewidth=0.5, alpha=0.85, zorder=3)
+
+    ax1.set_xlabel("Hour of Day", fontsize=9)
+    ax1.set_ylabel("Number of Peak Events", fontsize=9, color=BRAND_PRIMARY)
+    ax1.set_xticks(range(0, 24, 2))
+    ax1.set_xticklabels([f"{h:02d}:00" for h in range(0, 24, 2)], fontsize=7)
+    ax1.set_xlim(-0.6, 23.6)
+    ax1.grid(True, axis="y", alpha=0.3, zorder=0)
+    ax1.tick_params(axis="y", labelcolor=BRAND_PRIMARY)
+
+    # Overlay: average consumption line on secondary axis
+    ax2 = ax1.twinx()
+    ax2.plot(hours, avg_by_hour, color=BRAND_LIGHT_GRAY, linewidth=1.5,
+             linestyle="-", alpha=0.7, label=f"Avg Power (kW)", zorder=2)
+    ax2.axhline(threshold, color=BRAND_SECONDARY, linewidth=1.0,
+                linestyle="--", alpha=0.5,
+                label=f"P{int(peak_hour_data.get('percentile_used', 90))} "
+                      f"threshold: {threshold:,.0f} kW")
+    ax2.set_ylabel("Average Power (kW)", fontsize=9, color=BRAND_LIGHT_GRAY)
+    ax2.tick_params(axis="y", labelcolor=BRAND_LIGHT_GRAY)
+    ax2.legend(fontsize=7, loc="upper left")
+
+    ax1.set_title(f"{column_name} — Peak Event Frequency (24-Hour)",
+                  fontsize=11, fontweight="bold", color=BRAND_PRIMARY)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 def _empty_chart(message: str) -> bytes:
     """Generate a small placeholder chart with a message."""
     fig, ax = plt.subplots(figsize=(6, 2), dpi=100)
@@ -720,7 +781,8 @@ def generate_pdf_report(output_path: str,
         table_metrics = [m for m in selected
                          if m not in ("monthly_totals", "seasonal_profile",
                                       "peak_analysis", "frequency_histogram",
-                                      "cumulative_distribution")]
+                                      "cumulative_distribution",
+                                      "peak_hour_frequency")]
         if table_metrics:
             story.append(_build_stats_table(yearly, table_metrics))
             story.append(Spacer(1, 6 * mm))
@@ -918,6 +980,57 @@ def generate_pdf_report(output_path: str,
         story.append(Spacer(1, 3 * mm))
         story.append(pct_table)
         story.append(Spacer(1, 4 * mm))
+
+    # --- Peak Hour Frequency ---
+    peak_hours = stats_result.get("peak_hours", {})
+    if "peak_hour_frequency" in selected and peak_hours:
+        story.append(PageBreak())
+        story.append(_section_heading("Peak Event Frequency by Hour"))
+        story.append(Spacer(1, 4 * mm))
+        story.append(_body_text(
+            "Distribution of peak events across the 24-hour day. "
+            "Peak events are defined as readings at or above the "
+            "90th percentile. High-frequency hours are highlighted "
+            "to identify time-of-use demand patterns."))
+        story.append(Spacer(1, 3 * mm))
+
+        for col_name, ph_data in peak_hours.items():
+            if ph_data.get("total_peaks", 0) == 0:
+                continue
+
+            chart_bytes = generate_peak_hour_frequency_chart(ph_data, col_name)
+            img = RLImage(io.BytesIO(chart_bytes),
+                          width=170 * mm, height=80 * mm)
+            story.append(img)
+            story.append(Spacer(1, 2 * mm))
+
+            # Insight text
+            peak_h = ph_data["peak_hour"]
+            peak_hc = ph_data["peak_hour_count"]
+            conc = ph_data.get("concentration", {})
+            pf_hours = ph_data.get("peak_free_hours", [])
+
+            insights = []
+            insights.append(
+                f"Peak events most common at <b>{peak_h:02d}:00</b> "
+                f"({peak_hc} occurrences).")
+            if conc.get("pct", 0) > 0:
+                insights.append(
+                    f"Peak concentration: <b>{conc['pct']:.0f}%</b> of peaks "
+                    f"occur between {conc['start_hour']:02d}:00 &ndash; "
+                    f"{conc['end_hour']:02d}:59.")
+            if pf_hours:
+                if len(pf_hours) <= 8:
+                    pf_str = ", ".join(f"{h:02d}:00" for h in pf_hours)
+                else:
+                    pf_str = (f"{pf_hours[0]:02d}:00 &ndash; "
+                              f"{pf_hours[-1]:02d}:00 "
+                              f"({len(pf_hours)} hours)")
+                insights.append(f"Peak-free hours: {pf_str}.")
+
+            for line in insights:
+                story.append(_body_text(f"<i>{line}</i>"))
+            story.append(Spacer(1, 4 * mm))
 
     # Build PDF with header/footer
     def on_page(canvas, doc_ref):

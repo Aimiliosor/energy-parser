@@ -41,6 +41,7 @@ from energy_parser.report_generator import (
     generate_peak_timeline_chart, generate_peak_heatmap,
     generate_peak_duration_chart, generate_peak_value_trend_chart,
     generate_histogram_chart, generate_cdf_chart,
+    generate_peak_hour_frequency_chart,
 )
 
 
@@ -1001,6 +1002,7 @@ class EnergyParserGUI:
             "peak_analysis": tk.BooleanVar(value=True),
             "frequency_histogram": tk.BooleanVar(value=True),
             "cumulative_distribution": tk.BooleanVar(value=True),
+            "peak_hour_frequency": tk.BooleanVar(value=True),
         }
 
         checkbox_labels = {
@@ -1016,6 +1018,7 @@ class EnergyParserGUI:
             "peak_analysis": "Peak Consumption Analysis",
             "frequency_histogram": "Frequency Histogram",
             "cumulative_distribution": "Cumulative Distribution",
+            "peak_hour_frequency": "Peak Event Frequency (24h)",
         }
 
         keys = list(checkbox_labels.keys())
@@ -1250,6 +1253,42 @@ class EnergyParserGUI:
                         f"  90th percentile:          {pcts.get('p90', 0):,.2f} kW\n"
                         f"  95th percentile:          {pcts.get('p95', 0):,.2f} kW\n")
 
+            # Peak hour frequency text display
+            if "peak_hour_frequency" in selected:
+                peak_hours = self.stats_result.get("peak_hours", {})
+                for col_name, ph_data in peak_hours.items():
+                    if ph_data.get("total_peaks", 0) == 0:
+                        continue
+                    self.stats_text.insert(tk.END,
+                        f"\nPeak Event Frequency — {col_name}\n", "header")
+                    self.stats_text.insert(tk.END, "=" * 50 + "\n")
+                    self.stats_text.insert(tk.END,
+                        f"  Threshold (P{int(ph_data['percentile_used'])}): "
+                        f"{ph_data['threshold_value']:,.2f} kW\n")
+                    self.stats_text.insert(tk.END,
+                        f"  Total peak events: {ph_data['total_peaks']:,}\n")
+
+                    peak_h = ph_data["peak_hour"]
+                    self.stats_text.insert(tk.END,
+                        f"  Peak events most common at: "
+                        f"{peak_h:02d}:00 ({ph_data['peak_hour_count']} occurrences)\n")
+
+                    pf = ph_data.get("peak_free_hours", [])
+                    if pf:
+                        if len(pf) <= 10:
+                            pf_str = ", ".join(f"{h:02d}:00" for h in pf)
+                        else:
+                            pf_str = f"{len(pf)} hours"
+                        self.stats_text.insert(tk.END,
+                            f"  Peak-free hours: {pf_str}\n")
+
+                    conc = ph_data.get("concentration", {})
+                    if conc.get("pct", 0) > 0:
+                        self.stats_text.insert(tk.END,
+                            f"  Peak concentration: {conc['pct']:.0f}% of peaks "
+                            f"between {conc['start_hour']:02d}:00 - "
+                            f"{conc['end_hour']:02d}:59\n")
+
             self.stats_text.config(state=tk.DISABLED)
 
             self.update_progress(80, "Rendering charts...")
@@ -1341,6 +1380,15 @@ class EnergyParserGUI:
                         col_cdf, col_name, cdf_all)
                     self._display_chart(chart_bytes)
                     break  # Only one combined CDF chart needed
+
+            # Render peak hour frequency charts
+            if "peak_hour_frequency" in selected:
+                peak_hours = self.stats_result.get("peak_hours", {})
+                for col_name, ph_data in peak_hours.items():
+                    if ph_data.get("total_peaks", 0) == 0:
+                        continue
+                    chart_bytes = generate_peak_hour_frequency_chart(ph_data, col_name)
+                    self._display_chart(chart_bytes)
 
             self.update_progress(100, "Analysis complete!")
 
