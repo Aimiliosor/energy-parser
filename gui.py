@@ -829,10 +829,10 @@ class EnergyParserGUI:
                               f"{acc:.1f}%",
                               self._status_color(acc, 95, 80))
 
-        breakdown = f"L:{outliers['low']} M:{outliers['medium']} H:{outliers['high']}"
-        self._create_kpi_tile(self.kpi_frame, 2, 2, "Outlier Breakdown",
-                              breakdown,
-                              self._status_color(total, 0, 5, higher_is_better=False))
+        orig_pct = kpi.get("original_data_pct", 100.0)
+        self._create_kpi_tile(self.kpi_frame, 2, 2, "Original Data",
+                              f"{orig_pct:.1f}%",
+                              self._status_color(orig_pct, 90, 70))
 
         # Row 3: Untrustworthiness Score (spanning full width)
         untrust = kpi.get("untrustworthiness", {})
@@ -1752,14 +1752,24 @@ class EnergyParserGUI:
 
             # Apply corrections based on choices
             # Duplicates
+            dup_timestamps = set()
+            for d in self.quality_report.get("duplicates", []):
+                dup_timestamps.add(d["timestamp"])
+
             if choices.get("duplicates") == "first":
                 df = df.drop_duplicates(subset="Date & Time", keep="first").reset_index(drop=True)
             elif choices.get("duplicates") == "last":
                 df = df.drop_duplicates(subset="Date & Time", keep="last").reset_index(drop=True)
             elif choices.get("duplicates") == "average":
-                value_cols = [c for c in df.columns if c != "Date & Time"]
-                df = df.groupby("Date & Time", as_index=False)[value_cols].mean()
+                value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
+                agg_cols = {col: "mean" for col in value_cols}
+                if "data_source" in df.columns:
+                    agg_cols["data_source"] = "first"
+                df = df.groupby("Date & Time", as_index=False).agg(agg_cols)
                 df = df.sort_values("Date & Time").reset_index(drop=True)
+                if "data_source" in df.columns and dup_timestamps:
+                    mask = df["Date & Time"].isin(dup_timestamps)
+                    df.loc[mask, "data_source"] = "duplicate_resolved"
 
             self.update_progress(40, "Filling gaps...")
 
@@ -1767,7 +1777,7 @@ class EnergyParserGUI:
             gaps = self.quality_report.get("gaps", [])
             if gaps and choices.get("gaps") != "skip":
                 freq = pd.Timedelta(hours=self.hours_per_interval)
-                value_cols = [c for c in df.columns if c != "Date & Time"]
+                value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
                 new_rows = []
                 max_fill_rows = len(df) * 2  # Safety cap: don't create more rows than 2x original
 
@@ -1777,6 +1787,8 @@ class EnergyParserGUI:
                         row = {"Date & Time": current}
                         for col in value_cols:
                             row[col] = float("nan")
+                        if "data_source" in df.columns:
+                            row["data_source"] = "gap_filled"
                         new_rows.append(row)
                         current += freq
 
@@ -1788,38 +1800,57 @@ class EnergyParserGUI:
             self.update_progress(60, "Filling missing values...")
 
             # Missing values - fully vectorized approach
-            value_cols = [c for c in df.columns if c != "Date & Time"]
-            if choices.get("missing") == "previous_day":
-                # Vectorized: merge with shifted version of itself
-                df = df.set_index("Date & Time").sort_index()
+            value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
+            missing_choice = choices.get("missing")
+            if missing_choice and missing_choice != "skip":
+                # Capture NaN mask before filling for data_source tracking
+                nan_masks = {}
                 for col in value_cols:
-                    if df[col].isna().any():
-                        # Try offsets: 1 day ago, 1 day ahead, 7 days ago
-                        for days in [1, -1, 7, -7]:
-                            if not df[col].isna().any():
-                                break
-                            shifted_idx = df.index + pd.Timedelta(days=days)
-                            fill_values = df[col].reindex(shifted_idx).values
-                            df[col] = df[col].fillna(pd.Series(fill_values, index=df.index))
-                df = df.reset_index()
-                # Final fallback to interpolation
-                for col in value_cols:
-                    df[col] = df[col].interpolate(method="linear", limit_direction="both")
-            elif choices.get("missing") == "interpolate":
-                for col in value_cols:
-                    df[col] = df[col].interpolate(method="linear", limit_direction="both")
-            elif choices.get("missing") == "zero":
-                for col in value_cols:
-                    df[col] = df[col].fillna(0)
+                    nan_masks[col] = df[col].isna().copy()
+
+                if missing_choice == "previous_day":
+                    # Vectorized: merge with shifted version of itself
+                    df = df.set_index("Date & Time").sort_index()
+                    for col in value_cols:
+                        if df[col].isna().any():
+                            # Try offsets: 1 day ago, 1 day ahead, 7 days ago
+                            for days in [1, -1, 7, -7]:
+                                if not df[col].isna().any():
+                                    break
+                                shifted_idx = df.index + pd.Timedelta(days=days)
+                                fill_values = df[col].reindex(shifted_idx).values
+                                df[col] = df[col].fillna(pd.Series(fill_values, index=df.index))
+                    df = df.reset_index()
+                    # Final fallback to interpolation
+                    for col in value_cols:
+                        df[col] = df[col].interpolate(method="linear", limit_direction="both")
+                elif missing_choice == "interpolate":
+                    for col in value_cols:
+                        df[col] = df[col].interpolate(method="linear", limit_direction="both")
+                elif missing_choice == "zero":
+                    for col in value_cols:
+                        df[col] = df[col].fillna(0)
+
+                # Mark rows where NaN was filled as corrected
+                if "data_source" in df.columns:
+                    for col in value_cols:
+                        if col in nan_masks:
+                            was_nan = nan_masks[col]
+                            # Align mask with current index (may have changed after set_index/reset_index)
+                            common_idx = was_nan.index.intersection(df.index)
+                            filled_mask = was_nan.loc[common_idx] & df.loc[common_idx, col].notna()
+                            df.loc[filled_mask[filled_mask].index, "data_source"] = "missing_filled"
 
             self.update_progress(80, "Handling outliers...")
 
             # Outliers
             outliers = self.quality_report.get("outliers", [])
+            outlier_rows = set()
             if choices.get("outliers") == "previous_day" and outliers:
                 # For outliers, just use interpolation (faster and usually good enough)
                 for o in outliers:
                     df.at[o["row"], o["column"]] = float("nan")
+                    outlier_rows.add(o["row"])
                 for col in value_cols:
                     df[col] = df[col].interpolate(method="linear", limit_direction="both")
             elif choices.get("outliers") == "cap":
@@ -1829,6 +1860,13 @@ class EnergyParserGUI:
                         df.at[o["row"], o["column"]] = threshold
                     else:
                         df.at[o["row"], o["column"]] = o["median"] / 10
+                    outlier_rows.add(o["row"])
+
+            # Mark corrected outlier rows
+            if "data_source" in df.columns and outlier_rows:
+                valid_rows_idx = [r for r in outlier_rows if r in df.index]
+                if valid_rows_idx:
+                    df.loc[valid_rows_idx, "data_source"] = "outlier_corrected"
 
             self.transformed_df = df
             self.update_progress(90, "Post-correction validation...")

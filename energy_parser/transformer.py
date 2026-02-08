@@ -141,6 +141,9 @@ def transform_data(
     # Sort by date
     result = result.sort_values("Date & Time").reset_index(drop=True)
 
+    # Mark all rows as original data (corrections will update this later)
+    result["data_source"] = "original"
+
     valid_rows = result["Date & Time"].notna().sum()
     console.print(f"  Transformation complete: [bold]{valid_rows}[/bold] valid rows")
 

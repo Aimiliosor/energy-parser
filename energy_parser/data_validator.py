@@ -53,7 +53,7 @@ def check_valid_value_preservation(original_df: pd.DataFrame,
         proc_valid = int(processed_df["Consumption (kW)"].notna().sum())
     else:
         # Fallback: first value column
-        value_cols = [c for c in processed_df.columns if c != "Date & Time"]
+        value_cols = [c for c in processed_df.columns if c not in ("Date & Time", "data_source")]
         if not value_cols:
             return {"name": "Value Preservation", "status": "WARN",
                     "details": "No value columns found in processed data"}
@@ -85,7 +85,7 @@ def check_unexpected_nans(original_df: pd.DataFrame,
     if "Consumption (kW)" in processed_df.columns:
         proc_nans = int(processed_df["Consumption (kW)"].isna().sum())
     else:
-        value_cols = [c for c in processed_df.columns if c != "Date & Time"]
+        value_cols = [c for c in processed_df.columns if c not in ("Date & Time", "data_source")]
         proc_nans = int(processed_df[value_cols[0]].isna().sum()) if value_cols else 0
 
     new_nans = max(0, proc_nans - orig_nans)
@@ -103,7 +103,7 @@ def check_sum_preservation(before_df: pd.DataFrame, after_df: pd.DataFrame) -> d
     PASS < 1 % drift, WARN < 5 %, FAIL >= 5 %
     """
     def _col_sum(df):
-        value_cols = [c for c in df.columns if c != "Date & Time"]
+        value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
         return sum(df[c].sum() for c in value_cols)
 
     before_sum = _col_sum(before_df)
@@ -178,7 +178,7 @@ def calculate_completeness(quality_report: dict) -> float:
 def check_impossible_spikes(df: pd.DataFrame, window: int = 10) -> list[dict]:
     """Values exceeding 10x rolling average -> spike detected."""
     spikes = []
-    value_cols = [c for c in df.columns if c != "Date & Time"]
+    value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
 
     for col in value_cols:
         series = df[col].dropna()
@@ -206,7 +206,7 @@ def calculate_temporal_summary(quality_report: dict) -> dict:
 def calculate_statistics(df: pd.DataFrame) -> dict:
     """Per value column: mean, median, std, min, max, skewness, kurtosis."""
     stats = {}
-    value_cols = [c for c in df.columns if c != "Date & Time"]
+    value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
 
     for col in value_cols:
         series = df[col].dropna()
@@ -313,7 +313,7 @@ def calculate_untrustworthiness(df: pd.DataFrame,
     breakdown = {}
 
     # Missing values (NaN in value columns)
-    value_cols = [c for c in df.columns if c != "Date & Time"]
+    value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
     missing_rows = set()
     for col in value_cols:
         nan_indices = df[df[col].isna()].index.tolist()
@@ -615,7 +615,7 @@ def run_validation(df: pd.DataFrame,
         if "Consumption (kW)" in df.columns:
             proc_valid = int(df["Consumption (kW)"].notna().sum())
         else:
-            value_cols = [c for c in df.columns if c != "Date & Time"]
+            value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
             proc_valid = int(df[value_cols[0]].notna().sum()) if value_cols else 0
         processing_accuracy = (proc_valid / orig_valid * 100) if orig_valid > 0 else 100.0
     else:
@@ -627,7 +627,7 @@ def run_validation(df: pd.DataFrame,
     )
 
     # --- Value range ---
-    value_cols = [c for c in df.columns if c != "Date & Time"]
+    value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
     all_values = pd.concat([df[c] for c in value_cols]).dropna() if value_cols else pd.Series(dtype=float)
     if all_values.empty:
         value_range = {"min": 0.0, "max": 0.0, "avg": 0.0}
@@ -693,6 +693,12 @@ def run_validation(df: pd.DataFrame,
         quality_report, outlier_classification, temporal_summary,
         spikes, untrustworthiness)
 
+    # --- Original data percentage ---
+    if "data_source" in df.columns:
+        original_pct = (df["data_source"] == "original").sum() / len(df) * 100
+    else:
+        original_pct = 100.0
+
     return {
         "completeness_pct": round(completeness_pct, 1),
         "quality_score": quality_score,
@@ -707,4 +713,5 @@ def run_validation(df: pd.DataFrame,
         "detailed_results": detailed_results,
         "untrustworthiness": untrustworthiness,
         "recommendations": recommendations,
+        "original_data_pct": round(original_pct, 1),
     }

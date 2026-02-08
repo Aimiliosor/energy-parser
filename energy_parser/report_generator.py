@@ -343,6 +343,7 @@ def _build_peak_characteristics_table(peak_data: dict) -> Table:
     thresholds = peak_data.get("thresholds", {})
     patterns = peak_data.get("patterns", {})
     clustering = chars.get("clustering", {})
+    filtering = peak_data.get("data_filtering", {})
 
     rows = [
         ["Metric", "Value"],
@@ -359,6 +360,11 @@ def _build_peak_characteristics_table(peak_data: dict) -> Table:
         ["Time Above 95th Pct", f"{thresholds.get('time_above_p95_hours', 0):,.1f} hours"],
         ["Peak-to-Average Ratio", f"{thresholds.get('peak_to_avg_ratio', 0):.2f}x"],
     ]
+
+    # Add data filtering rows if applicable
+    if filtering.get("filter_applied"):
+        rows.append(["Data Points Used", f"{filtering.get('original_points', 0):,}"])
+        rows.append(["Corrected Excluded", f"{filtering.get('excluded_points', 0):,} ({filtering.get('excluded_pct', 0):.1f}%)"])
 
     table = Table(rows, colWidths=[160, 160])
     style_commands = [
@@ -650,6 +656,22 @@ def generate_pdf_report(output_path: str,
 
             story.append(_body_text(f"<b>{col_name}</b>"))
             story.append(Spacer(1, 2 * mm))
+
+            # Data filtering transparency note
+            filtering = peak_data.get("data_filtering", {})
+            if filtering.get("filter_applied"):
+                excluded = filtering.get("excluded_points", 0)
+                excluded_pct = filtering.get("excluded_pct", 0)
+                note = (f"<i>Analysis based on original data only &mdash; "
+                        f"{excluded} corrected data point(s) ({excluded_pct}%) excluded.</i>")
+                story.append(_body_text(note))
+
+                excl_peaks = filtering.get("excluded_peaks_in_corrected", 0)
+                if excl_peaks > 0:
+                    story.append(_body_text(
+                        f"<i>{excl_peaks} additional peak(s) found in corrected "
+                        f"data periods (excluded from analysis).</i>"))
+                story.append(Spacer(1, 2 * mm))
 
             # Top peaks table
             story.append(_body_text(

@@ -284,6 +284,13 @@ def display_kpi_dashboard(kpi: dict):
         table.add_row("Untrustworthiness", f"[{u_color}]{u_detail}[/{u_color}]",
                       f"[{u_color}]{u_rating}[/{u_color}]")
 
+    # Original Data %
+    orig_pct = kpi.get("original_data_pct", 100.0)
+    orig_color = _kpi_color(orig_pct, 90, 70)
+    orig_status = "PASS" if orig_pct >= 90 else ("WARN" if orig_pct >= 70 else "FAIL")
+    table.add_row("Original Data", f"[{orig_color}]{orig_pct:.1f}%[/{orig_color}]",
+                  f"[{orig_color}]{orig_status}[/{orig_color}]")
+
     console.print(table)
 
     # Detailed results

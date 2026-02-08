@@ -51,7 +51,16 @@ def correct_missing_values(df: pd.DataFrame, report: dict) -> pd.DataFrame:
 
     choice = Prompt.ask("  Choice", choices=["a", "b", "c", "d"], default="a")
 
-    value_cols = [c for c in df.columns if c != "Date & Time"]
+    value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
+
+    if choice == "d":
+        console.print("  Missing values left as-is")
+        return df
+
+    # Capture NaN mask before filling for data_source tracking
+    nan_masks = {}
+    for col in value_cols:
+        nan_masks[col] = df[col].isna().copy()
 
     if choice == "a":
         filled = 0
@@ -80,8 +89,12 @@ def correct_missing_values(df: pd.DataFrame, report: dict) -> pd.DataFrame:
             df[col] = df[col].fillna(0)
         console.print(f"  Filled {total_missing} missing values with 0")
 
-    elif choice == "d":
-        console.print("  Missing values left as-is")
+    # Mark rows where NaN was filled as corrected
+    if "data_source" in df.columns:
+        for col in value_cols:
+            was_nan = nan_masks[col]
+            now_filled = was_nan & df[col].notna()
+            df.loc[now_filled, "data_source"] = "missing_filled"
 
     return df
 
@@ -109,7 +122,7 @@ def correct_time_gaps(df: pd.DataFrame, report: dict, hours_per_interval: float)
 
     # Generate missing timestamps
     freq = pd.Timedelta(hours=hours_per_interval)
-    value_cols = [c for c in df.columns if c != "Date & Time"]
+    value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
     new_rows = []
 
     for gap in gaps:
@@ -118,6 +131,9 @@ def correct_time_gaps(df: pd.DataFrame, report: dict, hours_per_interval: float)
             row = {"Date & Time": current}
             for col in value_cols:
                 row[col] = float("nan")
+            # Mark new rows as gap-filled
+            if "data_source" in df.columns:
+                row["data_source"] = "gap_filled"
             new_rows.append(row)
             current += freq
 
@@ -167,6 +183,11 @@ def correct_duplicates(df: pd.DataFrame, report: dict) -> pd.DataFrame:
         console.print("  [green]No duplicates to correct.[/green]")
         return df
 
+    # Capture duplicate timestamps before dedup for data_source tracking
+    dup_timestamps = set()
+    for d in duplicates:
+        dup_timestamps.add(d["timestamp"])
+
     console.print(f"\n  [bold]Duplicates: {len(duplicates)} duplicate timestamp groups[/bold]")
     console.print("  How should duplicates be handled?")
     console.print("    (a) Keep first occurrence")
@@ -182,9 +203,16 @@ def correct_duplicates(df: pd.DataFrame, report: dict) -> pd.DataFrame:
         df = df.drop_duplicates(subset="Date & Time", keep="last").reset_index(drop=True)
         console.print(f"  Kept last occurrence for {len(duplicates)} groups")
     elif choice == "c":
-        value_cols = [c for c in df.columns if c != "Date & Time"]
-        df = df.groupby("Date & Time", as_index=False)[value_cols].mean()
+        value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
+        agg_cols = {col: "mean" for col in value_cols}
+        if "data_source" in df.columns:
+            agg_cols["data_source"] = "first"
+        df = df.groupby("Date & Time", as_index=False).agg(agg_cols)
         df = df.sort_values("Date & Time").reset_index(drop=True)
+        # Mark averaged rows as corrected
+        if "data_source" in df.columns:
+            mask = df["Date & Time"].isin(dup_timestamps)
+            df.loc[mask, "data_source"] = "duplicate_resolved"
         console.print(f"  Averaged values for {len(duplicates)} groups")
 
     return df
@@ -209,12 +237,16 @@ def correct_outliers(df: pd.DataFrame, report: dict) -> pd.DataFrame:
         console.print("  Outliers left as-is")
         return df
 
+    # Collect outlier row indices for data_source tracking
+    outlier_rows = set()
+
     if choice == "a":
         replaced = 0
         for o in outliers:
             val = fill_from_previous_day(df, o["column"], o["row"])
             if val is not None:
                 df.at[o["row"], o["column"]] = val
+                outlier_rows.add(o["row"])
                 replaced += 1
         console.print(f"  Replaced {replaced}/{len(outliers)} outliers from previous day")
 
@@ -225,7 +257,12 @@ def correct_outliers(df: pd.DataFrame, report: dict) -> pd.DataFrame:
                 df.at[o["row"], o["column"]] = threshold
             else:
                 df.at[o["row"], o["column"]] = o["median"] / 10
+            outlier_rows.add(o["row"])
         console.print(f"  Capped {len(outliers)} outliers at threshold")
+
+    # Mark corrected outlier rows
+    if "data_source" in df.columns and outlier_rows:
+        df.loc[list(outlier_rows), "data_source"] = "outlier_corrected"
 
     return df
 

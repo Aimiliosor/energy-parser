@@ -112,7 +112,7 @@ def run_quality_check(df: pd.DataFrame, granularity_label: str, hours_per_interv
     report["missing_timestamps"] = total_missing_timestamps
 
     # Missing values (NaN in value columns)
-    value_cols = [c for c in df.columns if c != "Date & Time"]
+    value_cols = [c for c in df.columns if c not in ("Date & Time", "data_source")]
     missing_values = {}
     for col in value_cols:
         nan_count = df[col].isna().sum()

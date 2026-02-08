@@ -31,8 +31,8 @@ MONTH_NAMES = [
 
 
 def _value_columns(df: pd.DataFrame) -> list[str]:
-    """Return value column names (everything except Date & Time)."""
-    return [c for c in df.columns if c != "Date & Time"]
+    """Return value column names (everything except Date & Time and data_source)."""
+    return [c for c in df.columns if c not in ("Date & Time", "data_source")]
 
 
 def compute_yearly_stats(df: pd.DataFrame, hours_per_interval: float) -> dict:
@@ -261,10 +261,43 @@ def compute_peak_analysis(df: pd.DataFrame,
     value_cols = _value_columns(df)
     dt_col = pd.to_datetime(df["Date & Time"])
 
+    # Determine if data_source filtering should be applied
+    has_data_source = "data_source" in df.columns
+
     for col in value_cols:
-        series = df[col].dropna()
+        # Filter to original data only for peak detection
+        if has_data_source:
+            original_mask = df["data_source"] == "original"
+            total_points = len(df[col].dropna())
+            original_points = len(df.loc[original_mask, col].dropna())
+            excluded_points = total_points - original_points
+            excluded_pct = (excluded_points / total_points * 100) if total_points > 0 else 0.0
+            filter_applied = excluded_points > 0
+
+            # Use original data for peak detection
+            analysis_df = df.loc[original_mask].copy()
+            analysis_dt = pd.to_datetime(analysis_df["Date & Time"])
+        else:
+            total_points = len(df[col].dropna())
+            original_points = total_points
+            excluded_points = 0
+            excluded_pct = 0.0
+            filter_applied = False
+            analysis_df = df
+            analysis_dt = dt_col
+
+        series = analysis_df[col].dropna()
         if len(series) < 5:
-            result[col] = _empty_peak_result()
+            peak_result = _empty_peak_result()
+            peak_result["data_filtering"] = {
+                "total_points": total_points,
+                "original_points": original_points,
+                "excluded_points": excluded_points,
+                "excluded_pct": round(excluded_pct, 1),
+                "filter_applied": filter_applied,
+                "excluded_peaks_in_corrected": 0,
+            }
+            result[col] = peak_result
             continue
 
         values = series.values
@@ -288,13 +321,13 @@ def compute_peak_analysis(df: pd.DataFrame,
 
         # Remove duplicates, sort by value descending
         peak_indices = sorted(set(peak_indices),
-                              key=lambda idx: df.loc[idx, col], reverse=True)
+                              key=lambda idx: analysis_df.loc[idx, col], reverse=True)
 
         # --- Top N peaks ---
         top_peaks = []
         for rank, idx in enumerate(peak_indices[:top_n], 1):
-            ts = dt_col.loc[idx]
-            val = float(df.loc[idx, col])
+            ts = analysis_dt.loc[idx]
+            val = float(analysis_df.loc[idx, col])
 
             # Position in the reset series for duration / rate calc
             pos = series.index.get_loc(idx)
@@ -315,7 +348,7 @@ def compute_peak_analysis(df: pd.DataFrame,
             })
 
         # --- Patterns ---
-        peak_timestamps = [dt_col.loc[i] for i in peak_indices]
+        peak_timestamps = [analysis_dt.loc[i] for i in peak_indices]
 
         # Hourly distribution
         hourly_dist = {h: 0 for h in range(24)}
@@ -422,11 +455,34 @@ def compute_peak_analysis(df: pd.DataFrame,
         # --- Peak timeline data (for charts) ---
         peak_timeline = []
         for idx in peak_indices:
-            ts = dt_col.loc[idx]
+            ts = analysis_dt.loc[idx]
             peak_timeline.append({
                 "timestamp": ts,
-                "value": float(df.loc[idx, col]),
+                "value": float(analysis_df.loc[idx, col]),
             })
+
+        # --- Count excluded peaks in corrected data ---
+        excluded_peaks_in_corrected = 0
+        if has_data_source and filter_applied:
+            corrected_mask = df["data_source"] != "original"
+            corrected_series = df.loc[corrected_mask, col].dropna()
+            if len(corrected_series) >= 3:
+                corr_values = corrected_series.values
+                for i in range(1, len(corrected_series) - 1):
+                    if (corr_values[i] > corr_values[i - 1]
+                            and corr_values[i] >= corr_values[i + 1]
+                            and corr_values[i] >= p90):
+                        excluded_peaks_in_corrected += 1
+
+        # --- Data filtering transparency ---
+        data_filtering = {
+            "total_points": total_points,
+            "original_points": original_points,
+            "excluded_points": excluded_points,
+            "excluded_pct": round(excluded_pct, 1),
+            "filter_applied": filter_applied,
+            "excluded_peaks_in_corrected": excluded_peaks_in_corrected,
+        }
 
         result[col] = {
             "top_peaks": top_peaks,
@@ -434,6 +490,7 @@ def compute_peak_analysis(df: pd.DataFrame,
             "characteristics": characteristics,
             "thresholds": thresholds,
             "peak_timeline": peak_timeline,
+            "data_filtering": data_filtering,
         }
 
     return result
