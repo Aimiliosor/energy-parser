@@ -43,6 +43,15 @@ from energy_parser.report_generator import (
 )
 
 
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(__file__)
+    return os.path.join(base_path, relative_path)
+
+
 # Color Palette
 COLORS = {
     "primary": "#2C495E",      # Dark blue-gray
@@ -171,7 +180,7 @@ class EnergyParserGUI:
         self.root.configure(bg=COLORS["bg"])
 
         # Set icon if available
-        icon_path = os.path.join(os.path.dirname(__file__), "favicon 1.ico")
+        icon_path = resource_path("favicon 1.ico")
         if os.path.exists(icon_path):
             try:
                 self.root.iconbitmap(icon_path)
@@ -218,7 +227,7 @@ class EnergyParserGUI:
     def load_images(self):
         """Load and store original images for responsive resizing."""
         # Load background image
-        bg_path = os.path.join(os.path.dirname(__file__), "Energy storage.jpg")
+        bg_path = resource_path("Energy storage.jpg")
         if os.path.exists(bg_path):
             try:
                 self.bg_image_original = Image.open(bg_path)
@@ -227,11 +236,11 @@ class EnergyParserGUI:
 
         # Load logo - try white version first, then navy
         logo_paths = [
-            os.path.join(os.path.dirname(__file__), "Logo_new_white.png"),
-            os.path.join(os.path.dirname(__file__), "logo white.png"),
-            os.path.join(os.path.dirname(__file__), "logo white.jpeg"),
-            os.path.join(os.path.dirname(__file__), "logo White.png"),
-            os.path.join(os.path.dirname(__file__), "logo Navy.jpeg"),
+            resource_path("Logo_new_white.png"),
+            resource_path("logo white.png"),
+            resource_path("logo white.jpeg"),
+            resource_path("logo White.png"),
+            resource_path("logo Navy.jpeg"),
         ]
         for logo_path in logo_paths:
             if os.path.exists(logo_path):
@@ -1296,8 +1305,7 @@ class EnergyParserGUI:
 
         try:
             # Determine logo path
-            logo_path = os.path.join(os.path.dirname(__file__),
-                                      "Logo_new_white.png")
+            logo_path = resource_path("Logo_new_white.png")
             if not os.path.exists(logo_path):
                 logo_path = None
 
