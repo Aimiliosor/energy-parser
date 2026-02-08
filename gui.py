@@ -40,6 +40,7 @@ from energy_parser.report_generator import (
     generate_pdf_report, generate_seasonal_chart,
     generate_peak_timeline_chart, generate_peak_heatmap,
     generate_peak_duration_chart, generate_peak_value_trend_chart,
+    generate_histogram_chart, generate_cdf_chart,
 )
 
 
@@ -998,6 +999,8 @@ class EnergyParserGUI:
             "daily_avg_kwh": tk.BooleanVar(value=True),
             "seasonal_profile": tk.BooleanVar(value=True),
             "peak_analysis": tk.BooleanVar(value=True),
+            "frequency_histogram": tk.BooleanVar(value=True),
+            "cumulative_distribution": tk.BooleanVar(value=True),
         }
 
         checkbox_labels = {
@@ -1011,6 +1014,8 @@ class EnergyParserGUI:
             "daily_avg_kwh": "Daily Average (kWh)",
             "seasonal_profile": "Seasonal Weekly Profile",
             "peak_analysis": "Peak Consumption Analysis",
+            "frequency_histogram": "Frequency Histogram",
+            "cumulative_distribution": "Cumulative Distribution",
         }
 
         keys = list(checkbox_labels.keys())
@@ -1072,6 +1077,19 @@ class EnergyParserGUI:
 
         # Keep references to chart images to prevent GC
         self._chart_images = []
+
+    def _display_chart(self, chart_bytes):
+        """Display a chart PNG in the chart_frame."""
+        img = Image.open(io.BytesIO(chart_bytes))
+        display_width = 750
+        ratio = display_width / img.width
+        display_height = int(img.height * ratio)
+        img = img.resize((display_width, display_height),
+                          Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
+        self._chart_images.append(photo)
+        label = tk.Label(self.chart_frame, image=photo, bg=COLORS["white"])
+        label.pack(pady=3)
 
     def _stats_select_all(self):
         for var in self.stat_vars.values():
@@ -1198,6 +1216,40 @@ class EnergyParserGUI:
                         f"    Readings above 95th:  {freq.get('above_95th', 0)}\n"
                         f"    Readings above 99th:  {freq.get('above_99th', 0)}\n")
 
+            # Histogram text display
+            if "frequency_histogram" in selected:
+                histogram = self.stats_result.get("histogram", {})
+                for col_name, hist_data in histogram.items():
+                    if not hist_data.get("counts"):
+                        continue
+                    self.stats_text.insert(tk.END,
+                        f"\nFrequency Histogram — {col_name}\n", "header")
+                    self.stats_text.insert(tk.END, "-" * 40 + "\n")
+                    self.stats_text.insert(tk.END,
+                        f"  Bins: {hist_data['n_bins']}  |  "
+                        f"Bin width: {hist_data['bin_width']:,.2f} kW\n")
+                    self.stats_text.insert(tk.END,
+                        f"  Mean: {hist_data['mean']:,.2f} kW  |  "
+                        f"Median: {hist_data['median']:,.2f} kW  |  "
+                        f"Std: {hist_data['std']:,.2f} kW\n")
+
+            # CDF text display
+            if "cumulative_distribution" in selected:
+                cdf_data = self.stats_result.get("cdf", {})
+                for col_name, col_cdf in cdf_data.items():
+                    pcts = col_cdf.get("percentiles", {})
+                    if not pcts:
+                        continue
+                    self.stats_text.insert(tk.END,
+                        f"\nCumulative Distribution — {col_name}\n", "header")
+                    self.stats_text.insert(tk.END, "-" * 40 + "\n")
+                    self.stats_text.insert(tk.END,
+                        f"  Data points: {col_cdf.get('count', 0):,}\n")
+                    self.stats_text.insert(tk.END,
+                        f"  50th percentile (median): {pcts.get('p50', 0):,.2f} kW\n"
+                        f"  90th percentile:          {pcts.get('p90', 0):,.2f} kW\n"
+                        f"  95th percentile:          {pcts.get('p95', 0):,.2f} kW\n")
+
             self.stats_text.config(state=tk.DISABLED)
 
             self.update_progress(80, "Rendering charts...")
@@ -1269,6 +1321,26 @@ class EnergyParserGUI:
                         label = tk.Label(self.chart_frame, image=photo,
                                           bg=COLORS["white"])
                         label.pack(pady=3)
+
+            # Render histogram charts
+            if "frequency_histogram" in selected:
+                histogram = self.stats_result.get("histogram", {})
+                for col_name, hist_data in histogram.items():
+                    if not hist_data.get("counts"):
+                        continue
+                    chart_bytes = generate_histogram_chart(hist_data, col_name)
+                    self._display_chart(chart_bytes)
+
+            # Render CDF charts
+            if "cumulative_distribution" in selected:
+                cdf_all = self.stats_result.get("cdf", {})
+                for col_name, col_cdf in cdf_all.items():
+                    if not col_cdf.get("values"):
+                        continue
+                    chart_bytes = generate_cdf_chart(
+                        col_cdf, col_name, cdf_all)
+                    self._display_chart(chart_bytes)
+                    break  # Only one combined CDF chart needed
 
             self.update_progress(100, "Analysis complete!")
 

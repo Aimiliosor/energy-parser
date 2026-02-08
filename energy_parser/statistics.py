@@ -22,6 +22,7 @@ ALL_METRIC_KEYS = [
     "total_kwh", "mean_kw", "median_kw", "std_kw",
     "min_max_kw", "peak_times", "monthly_totals",
     "daily_avg_kwh", "seasonal_profile", "peak_analysis",
+    "frequency_histogram", "cumulative_distribution",
 ]
 
 MONTH_NAMES = [
@@ -523,6 +524,104 @@ def _empty_peak_result() -> dict:
     }
 
 
+def compute_frequency_histogram(df: pd.DataFrame) -> dict:
+    """Compute frequency histogram data for each value column.
+
+    Uses Sturges' rule for bin count: k = ceil(1 + log2(n)).
+
+    Returns dict keyed by column name:
+    {
+        "Consumption (kW)": {
+            "bin_edges": list[float],
+            "counts": list[int],
+            "bin_width": float,
+            "mean": float,
+            "median": float,
+            "std": float,
+            "n_bins": int,
+        }
+    }
+    """
+    result = {}
+    value_cols = _value_columns(df)
+
+    for col in value_cols:
+        series = df[col].dropna()
+        if len(series) < 2:
+            result[col] = {
+                "bin_edges": [], "counts": [], "bin_width": 0.0,
+                "mean": 0.0, "median": 0.0, "std": 0.0, "n_bins": 0,
+            }
+            continue
+
+        # Sturges' rule
+        n_bins = max(5, int(np.ceil(1 + np.log2(len(series)))))
+        n_bins = min(n_bins, 100)  # cap for very large datasets
+
+        counts, bin_edges = np.histogram(series.values, bins=n_bins)
+        bin_width = float(bin_edges[1] - bin_edges[0]) if len(bin_edges) > 1 else 0.0
+
+        result[col] = {
+            "bin_edges": [float(e) for e in bin_edges],
+            "counts": [int(c) for c in counts],
+            "bin_width": round(bin_width, 4),
+            "mean": float(series.mean()),
+            "median": float(series.median()),
+            "std": float(series.std()) if len(series) > 1 else 0.0,
+            "n_bins": n_bins,
+        }
+
+    return result
+
+
+def compute_cumulative_distribution(df: pd.DataFrame) -> dict:
+    """Compute cumulative distribution data for each value column.
+
+    Returns dict keyed by column name:
+    {
+        "Consumption (kW)": {
+            "values": list[float],       # sorted values
+            "cdf": list[float],          # cumulative probabilities 0-100
+            "percentiles": {
+                "p50": float,
+                "p90": float,
+                "p95": float,
+            },
+            "count": int,
+        }
+    }
+    """
+    result = {}
+    value_cols = _value_columns(df)
+
+    for col in value_cols:
+        series = df[col].dropna().sort_values().reset_index(drop=True)
+        if len(series) < 2:
+            result[col] = {
+                "values": [], "cdf": [],
+                "percentiles": {"p50": 0.0, "p90": 0.0, "p95": 0.0},
+                "count": 0,
+            }
+            continue
+
+        values = series.values
+        n = len(values)
+        cdf = np.arange(1, n + 1) / n * 100  # percentage 0-100
+
+        result[col] = {
+            "values": [float(v) for v in values],
+            "cdf": [float(c) for c in cdf],
+            "percentiles": {
+                "p50": float(np.percentile(values, 50)),
+                "p90": float(np.percentile(values, 90)),
+                "p95": float(np.percentile(values, 95)),
+            },
+            "count": n,
+        }
+
+    return result
+
+
 def run_statistical_analysis(df: pd.DataFrame,
                               hours_per_interval: float,
                               selected_metrics: list[str] | None = None) -> dict:
@@ -557,9 +656,23 @@ def run_statistical_analysis(df: pd.DataFrame,
     else:
         peaks = {}
 
+    # Frequency histogram
+    if "frequency_histogram" in selected_metrics:
+        histogram = compute_frequency_histogram(df)
+    else:
+        histogram = {}
+
+    # Cumulative distribution
+    if "cumulative_distribution" in selected_metrics:
+        cdf = compute_cumulative_distribution(df)
+    else:
+        cdf = {}
+
     return {
         "yearly": yearly,
         "seasonal": seasonal,
         "peaks": peaks,
+        "histogram": histogram,
+        "cdf": cdf,
         "selected_metrics": selected_metrics,
     }

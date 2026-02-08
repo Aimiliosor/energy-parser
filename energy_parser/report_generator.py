@@ -276,6 +276,121 @@ def generate_peak_value_trend_chart(top_peaks: list[dict],
     return buf.read()
 
 
+def generate_histogram_chart(hist_data: dict, column_name: str) -> bytes:
+    """Render a frequency histogram for a value column.
+
+    hist_data: dict with bin_edges, counts, mean, median from
+               compute_frequency_histogram()[column_name].
+    Returns PNG bytes.
+    """
+    bin_edges = hist_data.get("bin_edges", [])
+    counts = hist_data.get("counts", [])
+    mean_val = hist_data.get("mean", 0)
+    median_val = hist_data.get("median", 0)
+
+    if not counts or not bin_edges:
+        return _empty_chart("No data for histogram")
+
+    fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+
+    # Bar chart using bin edges
+    bin_centers = [(bin_edges[i] + bin_edges[i + 1]) / 2 for i in range(len(counts))]
+    bin_width = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1.0
+
+    ax.bar(bin_centers, counts, width=bin_width * 0.9,
+           color=BRAND_PRIMARY, edgecolor="white", linewidth=0.5, alpha=0.85)
+
+    # Mean and median lines
+    ax.axvline(mean_val, color=BRAND_SECONDARY, linewidth=1.8, linestyle="--",
+               label=f"Mean: {mean_val:,.1f} kW")
+    ax.axvline(median_val, color="#28A745", linewidth=1.8, linestyle="-.",
+               label=f"Median: {median_val:,.1f} kW")
+
+    ax.set_xlabel("Power (kW)", fontsize=9)
+    ax.set_ylabel("Frequency", fontsize=9)
+    ax.set_title(f"{column_name} — Frequency Distribution",
+                 fontsize=11, fontweight="bold", color=BRAND_PRIMARY)
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_cdf_chart(cdf_data: dict, column_name: str,
+                        all_cdf_data: dict | None = None) -> bytes:
+    """Render a cumulative distribution function (CDF) chart.
+
+    If all_cdf_data is provided and has multiple columns, overlays them
+    on a single chart. Otherwise plots only the given column.
+
+    cdf_data: dict with values, cdf, percentiles from
+              compute_cumulative_distribution()[column_name].
+    all_cdf_data: full dict from compute_cumulative_distribution() for overlay.
+    Returns PNG bytes.
+    """
+    fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+
+    line_colors = {
+        0: BRAND_PRIMARY,       # consumption
+        1: BRAND_LIGHT_GRAY,    # production
+    }
+
+    # Plot all columns if overlay data provided, otherwise just the one
+    if all_cdf_data and len(all_cdf_data) > 1:
+        columns_to_plot = all_cdf_data
+    else:
+        columns_to_plot = {column_name: cdf_data}
+
+    for i, (col_name, col_cdf) in enumerate(columns_to_plot.items()):
+        values = col_cdf.get("values", [])
+        cdf = col_cdf.get("cdf", [])
+        if not values:
+            continue
+
+        color = line_colors.get(i, BRAND_PRIMARY)
+        ax.plot(values, cdf, color=color, linewidth=1.8, label=col_name)
+
+    # Mark percentiles from the primary column
+    percentiles = cdf_data.get("percentiles", {})
+    for pct_name, pct_val in [("50th", percentiles.get("p50")),
+                                ("90th", percentiles.get("p90")),
+                                ("95th", percentiles.get("p95"))]:
+        if pct_val is not None and pct_val > 0:
+            pct_num = int(pct_name.replace("th", ""))
+            ax.axvline(pct_val, color=BRAND_SECONDARY, linewidth=1.2,
+                       linestyle=":", alpha=0.8)
+            ax.axhline(pct_num, color=BRAND_SECONDARY, linewidth=0.5,
+                       linestyle=":", alpha=0.4)
+            ax.plot(pct_val, pct_num, marker="o", color=BRAND_SECONDARY,
+                    markersize=6, zorder=5)
+            ax.annotate(f"  {pct_name}: {pct_val:,.1f}",
+                        xy=(pct_val, pct_num),
+                        fontsize=7, color=BRAND_SECONDARY,
+                        fontweight="bold",
+                        verticalalignment="bottom")
+
+    ax.set_xlabel("Power (kW)", fontsize=9)
+    ax.set_ylabel("Cumulative Probability (%)", fontsize=9)
+    ax.set_ylim(0, 105)
+    title_col = column_name if len(columns_to_plot) == 1 else "All Columns"
+    ax.set_title(f"{title_col} — Cumulative Distribution",
+                 fontsize=11, fontweight="bold", color=BRAND_PRIMARY)
+    ax.legend(fontsize=8, loc="lower right")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 def _empty_chart(message: str) -> bytes:
     """Generate a small placeholder chart with a message."""
     fig, ax = plt.subplots(figsize=(6, 2), dpi=100)
@@ -604,7 +719,8 @@ def generate_pdf_report(output_path: str,
         # Filter out non-table metrics
         table_metrics = [m for m in selected
                          if m not in ("monthly_totals", "seasonal_profile",
-                                      "peak_analysis")]
+                                      "peak_analysis", "frequency_histogram",
+                                      "cumulative_distribution")]
         if table_metrics:
             story.append(_build_stats_table(yearly, table_metrics))
             story.append(Spacer(1, 6 * mm))
@@ -720,6 +836,88 @@ def generate_pdf_report(output_path: str,
                           width=170 * mm, height=85 * mm)
             story.append(img)
             story.append(Spacer(1, 6 * mm))
+
+    # --- Frequency Histogram ---
+    histogram = stats_result.get("histogram", {})
+    if "frequency_histogram" in selected and histogram:
+        story.append(PageBreak())
+        story.append(_section_heading("Frequency Distribution"))
+        story.append(Spacer(1, 4 * mm))
+        story.append(_body_text(
+            "Distribution of power values showing frequency of occurrence "
+            "across the measurement range. Mean and median lines indicate "
+            "central tendency."))
+        story.append(Spacer(1, 3 * mm))
+
+        for col_name, hist_data in histogram.items():
+            if not hist_data.get("counts"):
+                continue
+            chart_bytes = generate_histogram_chart(hist_data, col_name)
+            img = RLImage(io.BytesIO(chart_bytes),
+                          width=170 * mm, height=80 * mm)
+            story.append(img)
+            story.append(Spacer(1, 2 * mm))
+            story.append(_body_text(
+                f"<i>{col_name}: {hist_data.get('n_bins', 0)} bins, "
+                f"bin width {hist_data.get('bin_width', 0):,.2f} kW. "
+                f"Mean: {hist_data.get('mean', 0):,.2f} kW, "
+                f"Median: {hist_data.get('median', 0):,.2f} kW, "
+                f"Std Dev: {hist_data.get('std', 0):,.2f} kW.</i>"))
+            story.append(Spacer(1, 4 * mm))
+
+    # --- Cumulative Distribution ---
+    cdf = stats_result.get("cdf", {})
+    if "cumulative_distribution" in selected and cdf:
+        story.append(PageBreak())
+        story.append(_section_heading("Cumulative Distribution"))
+        story.append(Spacer(1, 4 * mm))
+        story.append(_body_text(
+            "Cumulative distribution function (CDF) showing the probability "
+            "that power values fall below a given threshold. Key percentiles "
+            "are marked for capacity planning and threshold analysis."))
+        story.append(Spacer(1, 3 * mm))
+
+        # Combined CDF chart (all columns overlaid)
+        first_col = next(iter(cdf))
+        chart_bytes = generate_cdf_chart(cdf[first_col], first_col, cdf)
+        img = RLImage(io.BytesIO(chart_bytes),
+                      width=170 * mm, height=80 * mm)
+        story.append(img)
+        story.append(Spacer(1, 2 * mm))
+
+        # Percentile summary table
+        pct_rows = [["Column", "50th Pct (kW)", "90th Pct (kW)", "95th Pct (kW)", "Count"]]
+        for col_name, col_cdf in cdf.items():
+            pcts = col_cdf.get("percentiles", {})
+            pct_rows.append([
+                col_name,
+                f"{pcts.get('p50', 0):,.2f}",
+                f"{pcts.get('p90', 0):,.2f}",
+                f"{pcts.get('p95', 0):,.2f}",
+                f"{col_cdf.get('count', 0):,}",
+            ])
+
+        pct_table = Table(pct_rows, colWidths=[120, 80, 80, 80, 60])
+        pct_style = [
+            ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]
+        for i in range(1, len(pct_rows)):
+            if i % 2 == 0:
+                pct_style.append(("BACKGROUND", (0, i), (-1, i), _RL_BG))
+        pct_table.setStyle(TableStyle(pct_style))
+        story.append(Spacer(1, 3 * mm))
+        story.append(pct_table)
+        story.append(Spacer(1, 4 * mm))
 
     # Build PDF with header/footer
     def on_page(canvas, doc_ref):
