@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(git init:*)",
+      "Bash(dir:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(git rm:*)",
+      "Bash(gh auth:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(pip install:*)",
+      "Bash(cd:*)",
+      "Bash(ls:*)",
+      "Bash(pyinstaller:*)",
+      "Bash(start \"\" \"C:\\\\Users\\\\Aimilios Orfanos\\\\Desktop\\\\energy-parser\\\\dist\\\\Spartacus\\\\Spartacus.exe\")",
+      "Bash(pip show:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd //c \"taskkill /IM Spartacus.exe /F\")",
+      "Bash(git revert:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)"
+    ]
+  }
+}
