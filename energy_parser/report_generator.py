@@ -777,11 +777,13 @@ def generate_pdf_report(output_path: str,
                          kpi_data: dict | None = None,
                          logo_path: str | None = None,
                          quality_report: dict | None = None,
-                         site_info: dict | None = None) -> str:
+                         site_info: dict | None = None,
+                         battery_data: dict | None = None) -> str:
     """Generate branded PDF report using reportlab.
 
     Args:
         site_info: Optional dict with "site_name" and "grid_capacity_kw".
+        battery_data: Optional dict from BatterySizer.generate_report_data().
 
     Returns output_path on success.
     """
@@ -1113,6 +1115,197 @@ def generate_pdf_report(output_path: str,
             for line in insights:
                 story.append(_body_text(f"<i>{line}</i>"))
             story.append(Spacer(1, 4 * mm))
+
+    # --- Battery Dimensioning Analysis ---
+    if battery_data:
+        story.append(PageBreak())
+        story.append(_section_heading("Battery Dimensioning Analysis"))
+        story.append(Spacer(1, 4 * mm))
+
+        # Input parameters table
+        tariffs = battery_data.get("tariffs", {})
+        param_rows = [
+            ["Parameter", "Value"],
+        ]
+        if site_info:
+            param_rows.append(["Site Name",
+                                site_info.get("site_name", "N/A")])
+        param_rows.extend([
+            ["Offtake Tariff", f"{tariffs.get('offtake', 0):,.0f} \u20ac/MWh"],
+            ["Injection Tariff",
+             f"{tariffs.get('injection', 0):,.0f} \u20ac/MWh"],
+            ["Peak Tariff", f"{tariffs.get('peak', 0):,.0f} \u20ac/kW"],
+        ])
+        param_table = Table(param_rows, colWidths=[160, 260])
+        param_style = [
+            ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ]
+        for i in range(1, len(param_rows)):
+            if i % 2 == 0:
+                param_style.append(
+                    ("BACKGROUND", (0, i), (-1, i), _RL_BG))
+        param_table.setStyle(TableStyle(param_style))
+        story.append(param_table)
+        story.append(Spacer(1, 6 * mm))
+
+        # Battery sizing recommendations table
+        rec = battery_data.get("recommendations", {})
+        rec_rows = [
+            ["Metric", "Value"],
+            ["Maximum Capacity Needed",
+             f"{rec.get('max_capacity', 0):,.1f} kWh"],
+            ["Average Capacity Needed",
+             f"{rec.get('avg_capacity', 0):,.1f} kWh"],
+            ["Recommended Capacity",
+             f"{rec.get('recommended_capacity', 0):,.1f} kWh"],
+            ["Recommended Power Rating",
+             f"{rec.get('recommended_power', 0):,.1f} kW"],
+        ]
+        rec_table = Table(rec_rows, colWidths=[200, 220])
+        rec_style = [
+            ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ]
+        for i in range(1, len(rec_rows)):
+            if i % 2 == 0:
+                rec_style.append(
+                    ("BACKGROUND", (0, i), (-1, i), _RL_BG))
+        rec_table.setStyle(TableStyle(rec_style))
+        story.append(rec_table)
+        story.append(Spacer(1, 6 * mm))
+
+        # Economic analysis summary
+        sav = battery_data.get("savings", {})
+        story.append(_section_heading("Economic Analysis"))
+        story.append(Spacer(1, 4 * mm))
+
+        econ_rows = [
+            ["Metric", "Value"],
+            ["Total Annual Savings",
+             f"\u20ac{sav.get('annual_savings', 0):,.0f}"],
+            ["Energy Arbitrage Savings",
+             f"\u20ac{sav.get('energy_arbitrage', 0):,.0f}"],
+            ["Peak Demand Reduction Savings",
+             f"\u20ac{sav.get('peak_reduction', 0):,.0f}"],
+            ["Peak Demand Reduction",
+             f"{sav.get('peak_reduction_kw', 0):,.1f} kW"],
+            ["Self-Consumption Rate",
+             f"{sav.get('self_consumption_pct', 0):.1f}%"],
+            ["Self-Consumption Increase",
+             f"+{sav.get('self_consumption_increase', 0):.1f}%"],
+        ]
+        econ_table = Table(econ_rows, colWidths=[200, 220])
+        econ_style = list(rec_style)  # same styling
+        for i in range(1, len(econ_rows)):
+            if i % 2 == 0:
+                econ_style.append(
+                    ("BACKGROUND", (0, i), (-1, i), _RL_BG))
+        econ_table.setStyle(TableStyle(econ_style))
+        story.append(econ_table)
+        story.append(Spacer(1, 6 * mm))
+
+        # Charts
+        charts = battery_data.get("charts", {})
+        chart_order = [
+            ("average_day_profile",
+             "Typical Daily Production vs Consumption Profile"),
+            ("monthly_storage", "Monthly Battery Storage Requirements"),
+            ("annual_pattern", "Annual Storage Pattern"),
+            ("duration_curve", "Storage Duration Curve"),
+            ("monthly_savings", "Monthly Savings Potential"),
+            ("self_consumption", "Energy Flow Analysis"),
+        ]
+
+        for chart_key, chart_title in chart_order:
+            chart_bytes = charts.get(chart_key)
+            if chart_bytes:
+                story.append(PageBreak())
+                story.append(_section_heading(chart_title))
+                story.append(Spacer(1, 4 * mm))
+                img = RLImage(io.BytesIO(chart_bytes),
+                              width=170 * mm, height=80 * mm)
+                story.append(img)
+                story.append(Spacer(1, 4 * mm))
+
+        # Monthly breakdown table
+        monthly_table_data = battery_data.get("monthly_table", [])
+        if monthly_table_data:
+            story.append(PageBreak())
+            story.append(_section_heading("Monthly Breakdown"))
+            story.append(Spacer(1, 4 * mm))
+
+            mt_header = ["Month", "Consumption\n(kWh)",
+                         "Production\n(kWh)",
+                         "Avg Storage\n(kWh)",
+                         "Max Storage\n(kWh)",
+                         "Est. Savings\n(\u20ac)"]
+            mt_rows = [mt_header]
+            for row in monthly_table_data:
+                mt_rows.append([
+                    row["month"],
+                    f"{row['consumption']:,.0f}",
+                    f"{row['production']:,.0f}",
+                    f"{row['avg_storage']:,.1f}",
+                    f"{row['max_storage']:,.1f}",
+                    f"{row['est_savings']:,.0f}",
+                ])
+
+            mt_table = Table(mt_rows,
+                             colWidths=[40, 75, 75, 70, 70, 70])
+            mt_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.5,
+                 colors.HexColor("#D0D5E0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ]
+            for i in range(1, len(mt_rows)):
+                if i % 2 == 0:
+                    mt_style.append(
+                        ("BACKGROUND", (0, i), (-1, i), _RL_BG))
+            mt_table.setStyle(TableStyle(mt_style))
+            story.append(mt_table)
+            story.append(Spacer(1, 6 * mm))
+
+        # Professional recommendations text
+        rec_text = battery_data.get("recommendation_text", "")
+        if rec_text:
+            story.append(_section_heading("Professional Recommendation"))
+            story.append(Spacer(1, 4 * mm))
+            # Split text into paragraphs and render
+            for paragraph in rec_text.split("\n\n"):
+                paragraph = paragraph.strip()
+                if paragraph:
+                    # Convert newlines to <br/> for reportlab
+                    para_html = paragraph.replace("\n", "<br/>")
+                    story.append(_body_text(para_html))
+                    story.append(Spacer(1, 3 * mm))
 
     # Build PDF with header/footer
     _site_name = site_info.get("site_name") if site_info else None

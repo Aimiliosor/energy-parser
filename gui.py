@@ -44,6 +44,7 @@ from energy_parser.report_generator import (
     generate_histogram_chart, generate_cdf_chart,
     generate_peak_hour_frequency_chart,
 )
+from energy_parser.battery_sizing import BatterySizer
 
 
 def resource_path(relative_path):
@@ -201,6 +202,7 @@ class EnergyParserGUI:
         self.granularity_label = "unknown"
         self.kpi_data = None
         self.stats_result = None
+        self.battery_result = None
 
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
@@ -444,6 +446,7 @@ class EnergyParserGUI:
         self.create_results_section()
         self.create_kpi_section()
         self.create_statistics_section()
+        self.create_battery_section()
         self.create_tools_section()
 
         # Initial background update
@@ -1484,6 +1487,17 @@ class EnergyParserGUI:
                 except (ValueError, TypeError):
                     pass
 
+            # Collect battery report data if available
+            battery_report_data = None
+            if (self.battery_result is not None
+                    and hasattr(self, '_battery_sizer')
+                    and self._battery_sizer is not None):
+                try:
+                    battery_report_data = (
+                        self._battery_sizer.generate_report_data())
+                except Exception:
+                    pass  # Non-critical
+
             result_path = generate_pdf_report(
                 output_path=save_path,
                 stats_result=self.stats_result,
@@ -1491,6 +1505,7 @@ class EnergyParserGUI:
                 logo_path=logo_path,
                 quality_report=self.quality_report,
                 site_info=site_info,
+                battery_data=battery_report_data,
             )
 
             self.update_progress(100, "PDF report generated!")
@@ -1503,9 +1518,299 @@ class EnergyParserGUI:
             self.update_progress(0, "Error generating report")
             messagebox.showerror("Error", f"PDF generation failed:\n{str(e)}")
 
+    def create_battery_section(self):
+        """Create the battery dimensioning section."""
+        content = self.create_card(self.content_frame,
+                                   "9. Battery Dimensioning Analysis")
+
+        # Enable checkbox
+        self.battery_enabled_var = tk.BooleanVar(value=False)
+        enable_cb = tk.Checkbutton(
+            content, text="Enable battery dimensioning",
+            variable=self.battery_enabled_var,
+            font=("Segoe UI", 10, "bold"),
+            bg=COLORS["white"], fg=COLORS["text_dark"],
+            activebackground=COLORS["white"],
+            selectcolor=COLORS["white"],
+            command=self._toggle_battery_inputs)
+        enable_cb.pack(anchor=tk.W, pady=(0, 5))
+
+        # Tariff inputs frame
+        self.battery_input_frame = tk.Frame(content, bg=COLORS["white"])
+        self.battery_input_frame.pack(fill=tk.X, padx=20, pady=5)
+
+        self.offtake_var = tk.StringVar(value="250")
+        self.injection_var = tk.StringVar(value="50")
+        self.peak_tariff_var = tk.StringVar(value="50")
+
+        tariff_grid = tk.Frame(self.battery_input_frame, bg=COLORS["white"])
+        tariff_grid.pack(fill=tk.X)
+
+        labels_entries = [
+            ("Offtake tariff (\u20ac/MWh):", self.offtake_var, 0),
+            ("Injection tariff (\u20ac/MWh):", self.injection_var, 1),
+            ("Peak tariff (\u20ac/kW):", self.peak_tariff_var, 2),
+        ]
+        for text, var, row in labels_entries:
+            tk.Label(tariff_grid, text=text,
+                     font=("Segoe UI", 10), bg=COLORS["white"]).grid(
+                         row=row, column=0, sticky=tk.W, pady=3)
+            ttk.Entry(tariff_grid, textvariable=var,
+                      width=12, font=("Segoe UI", 10)).grid(
+                          row=row, column=1, padx=10, pady=3, sticky=tk.W)
+
+        # Button row
+        btn_row = tk.Frame(self.battery_input_frame, bg=COLORS["white"])
+        btn_row.pack(fill=tk.X, pady=10)
+
+        self.battery_calc_btn = ModernButton(
+            btn_row, "Calculate Battery Requirements",
+            command=self.run_battery_analysis,
+            bg=COLORS["secondary"], width=260, height=38)
+        self.battery_calc_btn.pack(side=tk.LEFT, padx=5)
+
+        self.battery_charts_btn = ModernButton(
+            btn_row, "View Detailed Analysis",
+            command=self.display_battery_charts,
+            bg=COLORS["primary"], width=200, height=38)
+        self.battery_charts_btn.pack(side=tk.LEFT, padx=5)
+        self.battery_charts_btn.set_enabled(False)
+
+        # Results frame
+        self.battery_results_frame = tk.Frame(content, bg=COLORS["white"])
+        self.battery_results_frame.pack(fill=tk.X, pady=5)
+
+        # Chart display frame for battery
+        self.battery_chart_frame = tk.Frame(content, bg=COLORS["white"])
+        self.battery_chart_frame.pack(fill=tk.X, pady=5)
+
+        # Keep references to prevent GC
+        self._battery_chart_images = []
+
+        # Start with inputs hidden
+        self.battery_input_frame.pack_forget()
+
+    def _toggle_battery_inputs(self):
+        """Show/hide battery input fields based on checkbox."""
+        if self.battery_enabled_var.get():
+            self.battery_input_frame.pack(fill=tk.X, padx=20, pady=5)
+        else:
+            self.battery_input_frame.pack_forget()
+
+    def run_battery_analysis(self):
+        """Run battery dimensioning analysis."""
+        if self.transformed_df is None:
+            messagebox.showwarning("Warning",
+                                   "Please transform data first (Step 5).")
+            return
+
+        # Check for production data
+        if "Production (kW)" not in self.transformed_df.columns:
+            messagebox.showinfo(
+                "Production Data Required",
+                "Battery dimensioning requires both consumption and "
+                "production data.\n\nThis feature is only available for "
+                "sites with solar/renewable generation.")
+            return
+
+        # Parse tariffs
+        try:
+            offtake = float(self.offtake_var.get().strip())
+            injection = float(self.injection_var.get().strip())
+            peak = float(self.peak_tariff_var.get().strip())
+        except (ValueError, TypeError):
+            messagebox.showerror("Error",
+                                 "Please enter valid numeric tariff values.")
+            return
+
+        tariffs = {"offtake": offtake, "injection": injection, "peak": peak}
+
+        self.update_progress(10, "Validating data for battery analysis...")
+
+        try:
+            sizer = BatterySizer(self.transformed_df,
+                                 self.hours_per_interval, tariffs)
+
+            # Validate
+            validation = sizer.validate()
+            if not validation["valid"]:
+                messagebox.showinfo("Cannot Proceed", validation["message"])
+                self.update_progress(0, "Battery analysis cancelled")
+                return
+
+            self.update_progress(30, "Calculating daily metrics...")
+            self.battery_result = sizer.run_analysis()
+
+            self.update_progress(70, "Computing recommendations...")
+
+            # Show warning if applicable
+            if validation.get("warning"):
+                messagebox.showinfo("Data Coverage Warning",
+                                    validation["warning"])
+
+            # Check zero storable
+            rec = self.battery_result["recommendations"]
+            if rec.get("zero_storable"):
+                messagebox.showinfo(
+                    "No Excess Production",
+                    "No excess production detected. Battery storage "
+                    "would not provide savings with current production "
+                    "levels.")
+                self.update_progress(0, "No storable energy found")
+                return
+
+            # Display results
+            self._display_battery_results(rec,
+                                          self.battery_result["savings"])
+
+            # Store sizer for chart generation and report
+            self._battery_sizer = sizer
+
+            self.battery_charts_btn.set_enabled(True)
+            self.update_progress(100, "Battery analysis complete!")
+
+        except Exception as e:
+            self.update_progress(0, "Error in battery analysis")
+            messagebox.showerror("Error",
+                                 f"Battery analysis failed:\n{str(e)}")
+
+    def _display_battery_results(self, rec, savings):
+        """Display battery sizing results in the GUI."""
+        # Clear previous results
+        for w in self.battery_results_frame.winfo_children():
+            w.destroy()
+
+        # Results container with border
+        container = tk.Frame(self.battery_results_frame, bg=COLORS["white"],
+                             relief=tk.FLAT, bd=1,
+                             highlightbackground=COLORS["light_gray"],
+                             highlightthickness=1)
+        container.pack(fill=tk.X, padx=5, pady=5)
+
+        # Title bar
+        title_bar = tk.Frame(container, bg=COLORS["primary"])
+        title_bar.pack(fill=tk.X)
+        tk.Label(title_bar, text="BATTERY SIZING RECOMMENDATIONS",
+                 font=("Segoe UI", 11, "bold"),
+                 bg=COLORS["primary"], fg=COLORS["white"],
+                 padx=15, pady=8).pack(side=tk.LEFT)
+
+        # Results grid
+        results = tk.Frame(container, bg=COLORS["white"], padx=15, pady=10)
+        results.pack(fill=tk.X)
+
+        # Sizing recommendations
+        sizing_data = [
+            ("Maximum capacity needed:", f"{rec['max_capacity']:,.1f} kWh"),
+            ("Average capacity needed:", f"{rec['avg_capacity']:,.1f} kWh"),
+            ("Recommended capacity:", f"{rec['recommended_capacity']:,.1f} kWh"),
+            ("Recommended power rating:", f"{rec['recommended_power']:,.1f} kW"),
+        ]
+
+        for i, (label, value) in enumerate(sizing_data):
+            tk.Label(results, text=label, font=("Segoe UI", 10),
+                     bg=COLORS["white"], fg=COLORS["text_dark"]).grid(
+                         row=i, column=0, sticky=tk.W, pady=2)
+            color = COLORS["secondary"] if i == 2 else COLORS["primary"]
+            tk.Label(results, text=value,
+                     font=("Segoe UI", 10, "bold"),
+                     bg=COLORS["white"], fg=color).grid(
+                         row=i, column=1, sticky=tk.E, padx=(20, 0), pady=2)
+
+        # Separator
+        sep = tk.Frame(container, bg=COLORS["light_gray"], height=1)
+        sep.pack(fill=tk.X, padx=15)
+
+        # Savings section
+        sav_title = tk.Frame(container, bg=COLORS["primary"])
+        sav_title.pack(fill=tk.X)
+        tk.Label(sav_title, text="ESTIMATED ANNUAL SAVINGS",
+                 font=("Segoe UI", 11, "bold"),
+                 bg=COLORS["primary"], fg=COLORS["white"],
+                 padx=15, pady=8).pack(side=tk.LEFT)
+
+        sav_frame = tk.Frame(container, bg=COLORS["white"], padx=15, pady=10)
+        sav_frame.pack(fill=tk.X)
+
+        savings_data = [
+            ("With recommended battery:",
+             f"\u20ac{savings['annual_savings']:,.0f}"),
+            ("Energy arbitrage savings:",
+             f"\u20ac{savings['energy_arbitrage']:,.0f}"),
+            ("Peak demand reduction:",
+             f"\u20ac{savings['peak_reduction']:,.0f}"),
+            ("Self-consumption increase:",
+             f"+{savings['self_consumption_increase']:.1f}%"),
+        ]
+
+        for i, (label, value) in enumerate(savings_data):
+            tk.Label(sav_frame, text=label, font=("Segoe UI", 10),
+                     bg=COLORS["white"], fg=COLORS["text_dark"]).grid(
+                         row=i, column=0, sticky=tk.W, pady=2)
+            color = COLORS["success"] if i == 0 else COLORS["primary"]
+            tk.Label(sav_frame, text=value,
+                     font=("Segoe UI", 10, "bold"),
+                     bg=COLORS["white"], fg=color).grid(
+                         row=i, column=1, sticky=tk.E, padx=(20, 0), pady=2)
+
+    def display_battery_charts(self):
+        """Display all battery dimensioning charts."""
+        if not hasattr(self, '_battery_sizer') or self._battery_sizer is None:
+            messagebox.showwarning("Warning",
+                                   "Please run battery analysis first.")
+            return
+
+        self.update_progress(20, "Generating battery charts...")
+
+        # Clear previous charts
+        self._battery_chart_images.clear()
+        for w in self.battery_chart_frame.winfo_children():
+            w.destroy()
+
+        try:
+            sizer = self._battery_sizer
+            chart_generators = [
+                ("Typical Daily Profile", sizer.generate_average_day_profile),
+                ("Monthly Storage Requirements",
+                 sizer.generate_monthly_storage_chart),
+                ("Annual Storage Pattern",
+                 sizer.generate_annual_storage_pattern),
+                ("Storage Duration Curve", sizer.generate_duration_curve),
+                ("Monthly Savings Potential",
+                 sizer.generate_monthly_savings_chart),
+                ("Energy Flow Analysis",
+                 sizer.generate_self_consumption_chart),
+            ]
+
+            for i, (title, gen_func) in enumerate(chart_generators):
+                self.update_progress(
+                    20 + int(70 * (i + 1) / len(chart_generators)),
+                    f"Rendering: {title}...")
+
+                chart_bytes = gen_func()
+                img = Image.open(io.BytesIO(chart_bytes))
+                display_width = 750
+                ratio = display_width / img.width
+                display_height = int(img.height * ratio)
+                img = img.resize((display_width, display_height),
+                                 Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self._battery_chart_images.append(photo)
+
+                label = tk.Label(self.battery_chart_frame, image=photo,
+                                 bg=COLORS["white"])
+                label.pack(pady=3)
+
+            self.update_progress(100, "Battery charts rendered!")
+
+        except Exception as e:
+            self.update_progress(0, "Error rendering charts")
+            messagebox.showerror("Error",
+                                 f"Chart generation failed:\n{str(e)}")
+
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""
-        content = self.create_card(self.content_frame, "9. Developer Tools")
+        content = self.create_card(self.content_frame, "10. Developer Tools")
 
         tools_row = tk.Frame(content, bg=COLORS["white"])
         tools_row.pack(fill=tk.X)
