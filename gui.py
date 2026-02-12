@@ -2185,7 +2185,8 @@ class EnergyParserGUI:
 
         # Summary
         start, end = report.get("date_range", (None, None))
-        if start and end:
+        if (start is not None and end is not None
+                and not pd.isna(start) and not pd.isna(end)):
             self.results_text.insert(tk.END, f"Date Range: {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}\n")
         self.results_text.insert(tk.END, f"Granularity: {report.get('granularity', 'unknown')}\n")
         self.results_text.insert(tk.END, f"Total Rows: {report.get('total_rows', 0)}\n")
