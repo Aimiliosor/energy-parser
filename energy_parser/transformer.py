@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 from rich.console import Console
 
@@ -12,12 +14,32 @@ def parse_european_number(value) -> float:
       - European decimal only: 1234,56 → 1234.56
       - US: 1,234.56 → 1234.56
       - Plain: 246000 → 246000.0
+      - Space thousands: 1 234,56 or 1 234.56
+      - Non-breaking spaces (\xa0)
+      - Leading/trailing units or whitespace
       - Empty/blank → NaN
     """
+    # Already numeric — return directly
+    if isinstance(value, (int, float)):
+        if pd.isna(value):
+            return float("nan")
+        return float(value)
+
     if pd.isna(value):
         return float("nan")
 
     value = str(value).strip()
+    if not value:
+        return float("nan")
+
+    # Remove non-breaking spaces, thin spaces, and regular spaces used as
+    # thousands separators (common in European locales)
+    value = value.replace("\xa0", "").replace("\u202f", "").replace(" ", "")
+
+    # Strip common trailing/leading unit suffixes (kW, W, kWh, MWh, etc.)
+    value = re.sub(r'[a-zA-Z%°€$£]+$', '', value).strip()
+    value = re.sub(r'^[€$£]+', '', value).strip()
+
     if not value:
         return float("nan")
 
