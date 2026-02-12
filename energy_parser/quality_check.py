@@ -25,13 +25,16 @@ def find_time_gaps(dates: pd.Series, granularity_minutes: float) -> list[dict]:
 
 
 def find_duplicates(dates: pd.Series) -> list[dict]:
-    """Find duplicate timestamps."""
-    dupes = dates[dates.duplicated(keep=False)]
+    """Find duplicate timestamps (excluding NaT)."""
+    valid = dates.dropna()
+    dupes = valid[valid.duplicated(keep=False)]
     if dupes.empty:
         return []
 
     result = []
     for ts in dupes.unique():
+        if pd.isna(ts):
+            continue
         indices = dates[dates == ts].index.tolist()
         result.append({"timestamp": ts, "row_indices": indices})
     return result
@@ -152,7 +155,10 @@ def display_report(report: dict):
     summary.add_column("Value", width=20)
 
     start, end = report["date_range"]
-    summary.add_row("Date range", f"{start:%Y-%m-%d %H:%M} → {end:%Y-%m-%d %H:%M}")
+    if pd.notna(start) and pd.notna(end):
+        summary.add_row("Date range", f"{start:%Y-%m-%d %H:%M} → {end:%Y-%m-%d %H:%M}")
+    else:
+        summary.add_row("Date range", "N/A (dates could not be parsed)")
     summary.add_row("Granularity", report["granularity"])
     summary.add_row("Total rows in file", str(report["total_rows"]))
     summary.add_row("Expected timestamps", str(report["expected_timestamps"]))
@@ -180,11 +186,9 @@ def display_report(report: dict):
         gap_table.add_column("To", width=20)
         gap_table.add_column("Missing Timestamps", width=18)
         for g in report["gaps"][:20]:
-            gap_table.add_row(
-                f"{g['from']:%Y-%m-%d %H:%M}",
-                f"{g['to']:%Y-%m-%d %H:%M}",
-                str(g["missing_count"]),
-            )
+            from_str = f"{g['from']:%Y-%m-%d %H:%M}" if pd.notna(g['from']) else "N/A"
+            to_str = f"{g['to']:%Y-%m-%d %H:%M}" if pd.notna(g['to']) else "N/A"
+            gap_table.add_row(from_str, to_str, str(g["missing_count"]))
         if len(report["gaps"]) > 20:
             console.print(f"  ... and {len(report['gaps']) - 20} more gaps")
         console.print(gap_table)
@@ -202,7 +206,8 @@ def display_report(report: dict):
     if report["duplicates"]:
         console.print(f"\n  [yellow]Duplicate timestamps: {len(report['duplicates'])}[/yellow]")
         for d in report["duplicates"][:10]:
-            console.print(f"    {d['timestamp']:%Y-%m-%d %H:%M} at rows: {d['row_indices']}")
+            ts_str = f"{d['timestamp']:%Y-%m-%d %H:%M}" if pd.notna(d['timestamp']) else "NaT"
+            console.print(f"    {ts_str} at rows: {d['row_indices']}")
 
     # Detail: outliers
     if report["outliers"]:
