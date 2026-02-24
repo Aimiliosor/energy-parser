@@ -2906,8 +2906,8 @@ class EnergyParserGUI:
                 if not name:
                     continue
                 price_str = pv["price"].get().strip()
-                if not price_str:
-                    continue
+                if not price_str or float(price_str) == 0.0:
+                    continue  # Skip blank or zero-price periods (e.g. zeroed DB placeholders)
                 months_str = pv["months"].get().strip()
                 days_str = pv["days"].get().strip()
                 months = [int(m.strip()) for m in months_str.split(",")
