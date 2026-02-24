@@ -576,7 +576,18 @@ class EnergyParserGUI:
                                  bg=COLORS["primary"], fg=COLORS["light_gray"])
         subtitle_label.pack()
 
-        # Right side - removed the small energy image (now using as background)
+        # Right side — Generate Report button (always visible)
+        right_frame = tk.Frame(header_frame, bg=COLORS["primary"])
+        right_frame.pack(side=tk.RIGHT, padx=20, pady=10)
+
+        self.report_btn = tk.Button(
+            right_frame, text="\u2009\U0001f4c4  Generate Report",
+            font=("Segoe UI", 10, "bold"),
+            bg=COLORS["secondary"], fg=COLORS["white"],
+            activebackground="#D03A4E", activeforeground=COLORS["white"],
+            relief="flat", cursor="hand2", padx=14, pady=6,
+            command=self._show_report_dialog)
+        self.report_btn.pack()
 
     def create_card(self, parent, title):
         """Create a card-style container."""
@@ -1487,15 +1498,182 @@ class EnergyParserGUI:
                 chart_bytes = generate_peak_hour_frequency_chart(ph_data, col_name)
                 self._display_chart(chart_bytes)
 
-    def generate_report(self):
-        """Generate a branded PDF report."""
-        if self.stats_result is None:
-            messagebox.showwarning("Warning",
-                                    "Please run analysis first.")
+    # ============ Report Dialog & Generation ============
+
+    def _show_report_dialog(self):
+        """Show the report configuration dialog with section checkboxes."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Generate Report")
+        dlg.geometry("520x520")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        # Center on parent
+        dlg.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 520) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 520) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+        main = tk.Frame(dlg, bg=COLORS["white"], padx=20, pady=15)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        # Title
+        tk.Label(main, text="Report Configuration",
+                 font=("Segoe UI", 14, "bold"),
+                 bg=COLORS["white"], fg=COLORS["primary"]).pack(anchor="w")
+        tk.Frame(main, bg=COLORS["secondary"], height=2).pack(fill=tk.X, pady=(4, 12))
+
+        # --- Report title field ---
+        tk.Label(main, text="Report Title:", font=("Segoe UI", 9, "bold"),
+                 bg=COLORS["white"], fg=COLORS["text_dark"]).pack(anchor="w")
+        report_title_var = tk.StringVar(value="Spartacus Energy Analysis Report")
+        tk.Entry(main, textvariable=report_title_var, font=("Segoe UI", 9),
+                 width=60).pack(fill=tk.X, pady=(2, 8))
+
+        # --- Site / Customer name field ---
+        tk.Label(main, text="Site / Customer Name (optional):",
+                 font=("Segoe UI", 9, "bold"),
+                 bg=COLORS["white"], fg=COLORS["text_dark"]).pack(anchor="w")
+        site_name_default = self.site_name_var.get().strip()
+        site_name_var = tk.StringVar(value=site_name_default)
+        tk.Entry(main, textvariable=site_name_var, font=("Segoe UI", 9),
+                 width=60).pack(fill=tk.X, pady=(2, 12))
+
+        # --- Section checkboxes ---
+        tk.Label(main, text="Select sections to include:",
+                 font=("Segoe UI", 9, "bold"),
+                 bg=COLORS["white"], fg=COLORS["text_dark"]).pack(anchor="w", pady=(0, 4))
+
+        sections_frame = tk.Frame(main, bg=COLORS["white"])
+        sections_frame.pack(fill=tk.X)
+
+        # Define sections: (key, label, available_check)
+        has_file = self.transformed_df is not None or self.file_path is not None
+        has_quality = self.quality_report is not None or self.kpi_data is not None
+        has_stats = self.stats_result is not None
+        has_peaks = (has_stats and
+                     bool(self.stats_result.get("peaks", {})))
+        has_battery = self.battery_result is not None
+        has_cost = self.cost_simulation_result is not None
+
+        section_defs = [
+            ("data_overview",
+             "Data Overview",
+             "File info, granularity, date range, data preview",
+             has_file),
+            ("data_quality",
+             "Data Quality Analysis",
+             "Quality checks, KPIs, corrections",
+             has_quality),
+            ("statistical",
+             "Statistical Analysis",
+             "Averages, distributions, seasonal profiles",
+             has_stats),
+            ("peak_analysis",
+             "Peak Consumption Analysis",
+             "Top peaks, patterns, duration, heatmap",
+             has_peaks),
+            ("battery",
+             "Battery Dimensioning",
+             "Sizing recommendations, savings, charts",
+             has_battery),
+            ("cost_estimation",
+             "Energy Cost Estimation",
+             "Cost breakdown, monthly costs, pie chart",
+             has_cost),
+        ]
+
+        section_vars = {}
+        section_checks = {}
+        for key, label, desc, available in section_defs:
+            var = tk.BooleanVar(value=available)
+            section_vars[key] = var
+
+            row = tk.Frame(sections_frame, bg=COLORS["white"])
+            row.pack(fill=tk.X, pady=1)
+
+            state = "normal" if available else "disabled"
+            cb = tk.Checkbutton(row, variable=var, state=state,
+                                bg=COLORS["white"], activebackground=COLORS["white"])
+            cb.pack(side=tk.LEFT)
+            section_checks[key] = cb
+
+            lbl_text = label
+            if not available:
+                lbl_text += "  (not yet calculated)"
+            fg = COLORS["text_dark"] if available else "#999999"
+            tk.Label(row, text=lbl_text, font=("Segoe UI", 9),
+                     bg=COLORS["white"], fg=fg).pack(side=tk.LEFT)
+
+            if available:
+                tk.Label(row, text=f"  — {desc}", font=("Segoe UI", 8),
+                         bg=COLORS["white"], fg="#888888").pack(side=tk.LEFT)
+
+        # Select All / Deselect All buttons
+        sel_frame = tk.Frame(main, bg=COLORS["white"])
+        sel_frame.pack(fill=tk.X, pady=(8, 0))
+
+        def _select_all():
+            for key, var in section_vars.items():
+                for _k, _l, _d, avail in section_defs:
+                    if _k == key and avail:
+                        var.set(True)
+
+        def _deselect_all():
+            for var in section_vars.values():
+                var.set(False)
+
+        tk.Button(sel_frame, text="Select All", font=("Segoe UI", 8),
+                  command=_select_all, width=10).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(sel_frame, text="Deselect All", font=("Segoe UI", 8),
+                  command=_deselect_all, width=10).pack(side=tk.LEFT)
+
+        # --- Generate / Cancel buttons ---
+        btn_frame = tk.Frame(main, bg=COLORS["white"])
+        btn_frame.pack(fill=tk.X, pady=(20, 0))
+
+        result = {"generate": False}
+
+        def _on_generate():
+            result["generate"] = True
+            dlg.destroy()
+
+        def _on_cancel():
+            dlg.destroy()
+
+        tk.Button(btn_frame, text="Generate", font=("Segoe UI", 10, "bold"),
+                  bg=COLORS["secondary"], fg=COLORS["white"],
+                  activebackground="#D03A4E", activeforeground=COLORS["white"],
+                  relief="flat", padx=20, pady=6, cursor="hand2",
+                  command=_on_generate).pack(side=tk.RIGHT, padx=(5, 0))
+        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 10),
+                  relief="flat", padx=20, pady=6, cursor="hand2",
+                  command=_on_cancel).pack(side=tk.RIGHT)
+
+        dlg.wait_window()
+
+        if not result["generate"]:
             return
 
-        # Default filename based on site name
-        site_name = self.site_name_var.get().strip()
+        # Collect selected sections
+        selected_sections = [k for k, v in section_vars.items() if v.get()]
+        if not selected_sections:
+            messagebox.showinfo("No Sections",
+                                "No sections selected. Report not generated.")
+            return
+
+        self._generate_report(
+            selected_sections=selected_sections,
+            report_title=report_title_var.get().strip()
+                         or "Spartacus Energy Analysis Report",
+            site_name_override=site_name_var.get().strip(),
+        )
+
+    def _generate_report(self, selected_sections, report_title, site_name_override):
+        """Generate PDF report with only the selected sections."""
+        # Default filename
+        site_name = site_name_override or self.site_name_var.get().strip()
         if site_name:
             default_name = build_output_filename(site_name, "EnergyAnalysis", "pdf")
         elif self.file_path:
@@ -1504,10 +1682,8 @@ class EnergyParserGUI:
         else:
             default_name = "energy_report.pdf"
 
-        if self.file_path:
-            default_dir = os.path.dirname(self.file_path)
-        else:
-            default_dir = os.getcwd()
+        default_dir = (os.path.dirname(self.file_path)
+                       if self.file_path else os.getcwd())
 
         save_path = filedialog.asksaveasfilename(
             initialdir=default_dir,
@@ -1521,36 +1697,41 @@ class EnergyParserGUI:
         self.update_progress(30, "Generating PDF report...")
 
         try:
-            # Determine logo path
             logo_path = resource_path("Logo_new_white.png")
             if not os.path.exists(logo_path):
                 logo_path = None
 
             # Build site_info dict
             site_info = None
-            s_name = self.site_name_var.get().strip()
             g_cap = self.grid_capacity_var.get().strip()
-            if s_name:
-                site_info = {"site_name": s_name}
+            if site_name:
+                site_info = {"site_name": site_name}
                 try:
                     site_info["grid_capacity_kw"] = float(g_cap)
                 except (ValueError, TypeError):
                     pass
 
-            # Collect battery report data if available
+            # Data overview info
+            data_overview = None
+            if "data_overview" in selected_sections:
+                data_overview = self._collect_data_overview()
+
+            # Collect battery report data
             battery_report_data = None
-            if (self.battery_result is not None
+            if ("battery" in selected_sections
+                    and self.battery_result is not None
                     and hasattr(self, '_battery_sizer')
                     and self._battery_sizer is not None):
                 try:
                     battery_report_data = (
                         self._battery_sizer.generate_report_data())
                 except Exception:
-                    pass  # Non-critical
+                    pass
 
-            # Collect cost simulation report data if available
+            # Collect cost simulation report data
             cost_sim_report_data = None
-            if self.cost_simulation_result is not None:
+            if ("cost_estimation" in selected_sections
+                    and self.cost_simulation_result is not None):
                 try:
                     _, cs_summary, cs_monthly = self.cost_simulation_result
                     summary_dict = {
@@ -1591,7 +1772,6 @@ class EnergyParserGUI:
                             "peak_demand_kw": mb.peak_demand_kw,
                         }
 
-                    # Generate charts
                     pie_chart = generate_cost_breakdown_pie(summary_dict)
                     monthly_bar = generate_monthly_cost_bar_chart({
                         k: {
@@ -1603,11 +1783,6 @@ class EnergyParserGUI:
                         } for k, v in monthly_dict.items()
                     })
 
-                    charts = {
-                        "breakdown_pie": pie_chart,
-                        "monthly_bar": monthly_bar,
-                    }
-
                     contract_summary = ""
                     if self.cost_contract:
                         contract_summary = self.cost_contract.summary()
@@ -1616,21 +1791,28 @@ class EnergyParserGUI:
                         "contract_summary": contract_summary,
                         "summary": summary_dict,
                         "monthly": monthly_dict,
-                        "charts": charts,
+                        "charts": {
+                            "breakdown_pie": pie_chart,
+                            "monthly_bar": monthly_bar,
+                        },
                         "comparison": [],
                     }
                 except Exception:
-                    pass  # Non-critical
+                    pass
 
             result_path = generate_pdf_report(
                 output_path=save_path,
+                sections=selected_sections,
+                report_title=report_title,
                 stats_result=self.stats_result,
-                kpi_data=self.kpi_data,
+                kpi_data=self.kpi_data if "data_quality" in selected_sections else None,
                 logo_path=logo_path,
-                quality_report=self.quality_report,
+                quality_report=(self.quality_report
+                                if "data_quality" in selected_sections else None),
                 site_info=site_info,
                 battery_data=battery_report_data,
                 cost_simulation_data=cost_sim_report_data,
+                data_overview=data_overview,
             )
 
             self.update_progress(100, "PDF report generated!")
@@ -1642,6 +1824,36 @@ class EnergyParserGUI:
         except Exception as e:
             self.update_progress(0, "Error generating report")
             messagebox.showerror("Error", f"PDF generation failed:\n{str(e)}")
+
+    def _collect_data_overview(self):
+        """Collect data overview information for the report."""
+        overview = {}
+        if self.file_path:
+            overview["file_name"] = os.path.basename(self.file_path)
+            overview["file_path"] = self.file_path
+        if self.metadata:
+            overview["rows"] = self.metadata.get("rows", 0)
+            overview["columns"] = self.metadata.get("columns", 0)
+            overview["encoding"] = self.metadata.get("encoding", "")
+            overview["delimiter"] = self.metadata.get("delimiter", "")
+        if hasattr(self, 'granularity_label') and self.granularity_label:
+            overview["granularity"] = self.granularity_label
+        if hasattr(self, 'hours_per_interval') and self.hours_per_interval:
+            overview["hours_per_interval"] = self.hours_per_interval
+        if self.transformed_df is not None and not self.transformed_df.empty:
+            df = self.transformed_df
+            if "Date & Time" in df.columns:
+                try:
+                    dates = pd.to_datetime(df["Date & Time"])
+                    overview["date_start"] = dates.min().strftime("%Y-%m-%d %H:%M")
+                    overview["date_end"] = dates.max().strftime("%Y-%m-%d %H:%M")
+                    overview["data_points"] = len(df)
+                except Exception:
+                    pass
+            # Column names (excluding Date & Time)
+            data_cols = [c for c in df.columns if c != "Date & Time"]
+            overview["data_columns"] = data_cols
+        return overview
 
     def create_battery_section(self):
         """Create the battery dimensioning section."""
@@ -2100,12 +2312,6 @@ class EnergyParserGUI:
             command=self._export_cost_xlsx,
             bg=COLORS["success"], width=150, height=40)
         self.export_cost_xlsx_btn.pack(side=tk.LEFT, padx=5)
-
-        self.generate_pdf_btn = ModernButton(
-            self._sim_btn_row, "Generate PDF Report",
-            command=self.generate_report,
-            bg=COLORS["primary"], width=180, height=40)
-        self.generate_pdf_btn.pack(side=tk.LEFT, padx=5)
 
         # --- Results Frame ---
         self.cost_results_frame = tk.Frame(content, bg=COLORS["white"])
@@ -4370,6 +4576,9 @@ class EnergyParserGUI:
         self._refresh_recent_menu()
 
         file_menu.add_separator()
+        file_menu.add_command(label="Generate Report...", accelerator="Ctrl+R",
+                              command=self._show_report_dialog)
+        file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
         # Keyboard shortcuts
@@ -4378,6 +4587,7 @@ class EnergyParserGUI:
         self.root.bind("<Control-s>", lambda e: self._save_project())
         self.root.bind("<Control-Shift-S>", lambda e: self._save_project_as())
         self.root.bind("<Control-Shift-s>", lambda e: self._save_project_as())
+        self.root.bind("<Control-r>", lambda e: self._show_report_dialog())
 
     def _update_title(self):
         """Update the window title to reflect project name and dirty state."""

@@ -591,7 +591,8 @@ def _build_peak_characteristics_table(peak_data: dict,
 # PDF generation
 # ---------------------------------------------------------------------------
 
-def _header_footer(canvas, doc, logo_path=None, site_name=None):
+def _header_footer(canvas, doc, logo_path=None, site_name=None,
+                    report_title="Spartacus Energy Analysis Report"):
     """Draw header bar and footer on every page."""
     canvas.saveState()
     width, height = A4
@@ -610,17 +611,16 @@ def _header_footer(canvas, doc, logo_path=None, site_name=None):
             pass
 
     # Header title
+    header_title = f"Spartacus \u2014 {report_title}"
     canvas.setFillColor(_RL_WHITE)
     if site_name:
         canvas.setFont("Helvetica-Bold", 12)
-        canvas.drawString(48 * mm, height - 14 * mm,
-                          "Spartacus — Energy Data Analysis Report")
+        canvas.drawString(48 * mm, height - 14 * mm, header_title)
         canvas.setFont("Helvetica", 9)
         canvas.drawString(48 * mm, height - 20 * mm, site_name)
     else:
         canvas.setFont("Helvetica-Bold", 14)
-        canvas.drawString(48 * mm, height - 17 * mm,
-                          "Spartacus — Energy Data Analysis Report")
+        canvas.drawString(48 * mm, height - 17 * mm, header_title)
 
     # Header date
     canvas.setFont("Helvetica", 8)
@@ -634,7 +634,7 @@ def _header_footer(canvas, doc, logo_path=None, site_name=None):
     canvas.setFillColor(_RL_WHITE)
     canvas.setFont("Helvetica", 7)
     canvas.drawString(10 * mm, 4.5 * mm,
-                      "ReVolta srl — Spartacus Energy Analysis Report")
+                      f"ReVolta srl \u2014 {report_title}")
     canvas.drawRightString(width - 10 * mm, 4.5 * mm,
                            f"Page {doc.page}")
 
@@ -952,27 +952,38 @@ def generate_scenario_comparison_chart(comparison_data: list[dict]) -> bytes:
 
 
 def generate_pdf_report(output_path: str,
-                         stats_result: dict,
+                         stats_result: dict | None = None,
                          kpi_data: dict | None = None,
                          logo_path: str | None = None,
                          quality_report: dict | None = None,
                          site_info: dict | None = None,
                          battery_data: dict | None = None,
-                         cost_simulation_data: dict | None = None) -> str:
+                         cost_simulation_data: dict | None = None,
+                         sections: list | None = None,
+                         report_title: str = "Spartacus Energy Analysis Report",
+                         data_overview: dict | None = None) -> str:
     """Generate branded PDF report using reportlab.
 
     Args:
+        sections: List of section keys to include. If None, include all
+            available sections (backward-compatible). Valid keys:
+            "data_overview", "data_quality", "statistical", "peak_analysis",
+            "battery", "cost_estimation".
+        report_title: Custom title shown in the header/footer.
+        data_overview: Optional dict with file info, granularity, date range.
         site_info: Optional dict with "site_name" and "grid_capacity_kw".
         battery_data: Optional dict from BatterySizer.generate_report_data().
-        cost_simulation_data: Optional dict with cost simulation results:
-            - "contract_summary": str, contract description
-            - "summary": dict with CostBreakdown fields
-            - "monthly": dict of {month_key: dict with CostBreakdown fields}
-            - "comparison": list of dicts for scenario comparison (optional)
-            - "charts": dict of chart PNG bytes (optional)
+        cost_simulation_data: Optional dict with cost simulation results.
 
     Returns output_path on success.
     """
+    # Default: include everything (backward-compatible)
+    if sections is None:
+        sections = ["data_overview", "data_quality", "statistical",
+                     "peak_analysis", "battery", "cost_estimation"]
+    if stats_result is None:
+        stats_result = {}
+
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
@@ -983,6 +994,56 @@ def generate_pdf_report(output_path: str,
     )
 
     story = []
+
+    # --- Data Overview ---
+    if "data_overview" in sections and data_overview:
+        ov_rows = [["Field", "Value"]]
+        if data_overview.get("file_name"):
+            ov_rows.append(["Source File", data_overview["file_name"]])
+        if data_overview.get("granularity"):
+            ov_rows.append(["Data Granularity", data_overview["granularity"]])
+        if data_overview.get("data_points"):
+            ov_rows.append(["Data Points", f"{data_overview['data_points']:,}"])
+        if data_overview.get("date_start"):
+            ov_rows.append(["Date Range",
+                            f"{data_overview['date_start']}  \u2014  "
+                            f"{data_overview.get('date_end', '')}"])
+        if data_overview.get("rows"):
+            ov_rows.append(["Original Rows", f"{data_overview['rows']:,}"])
+        if data_overview.get("columns"):
+            ov_rows.append(["Original Columns", str(data_overview["columns"])])
+        if data_overview.get("encoding"):
+            ov_rows.append(["Encoding", data_overview["encoding"]])
+        if data_overview.get("data_columns"):
+            ov_rows.append(["Data Columns",
+                            ", ".join(data_overview["data_columns"])])
+
+        if len(ov_rows) > 1:
+            ov_table = Table(ov_rows, colWidths=[160, 260])
+            ov_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("ALIGN", (1, 0), (1, -1), "LEFT"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]
+            for i in range(1, len(ov_rows)):
+                if i % 2 == 0:
+                    ov_style.append(("BACKGROUND", (0, i), (-1, i), _RL_BG))
+            ov_table.setStyle(TableStyle(ov_style))
+            story.append(KeepTogether([
+                _section_heading("Data Overview"),
+                Spacer(1, 4 * mm),
+                ov_table,
+            ]))
+            story.append(Spacer(1, 6 * mm))
 
     # --- Site Information ---
     if site_info:
@@ -1022,7 +1083,7 @@ def generate_pdf_report(output_path: str,
         story.append(Spacer(1, 6 * mm))
 
     # --- KPI Summary ---
-    if kpi_data:
+    if "data_quality" in sections and kpi_data:
         story.append(KeepTogether([
             _section_heading("Data Quality Summary"),
             Spacer(1, 4 * mm),
@@ -1034,7 +1095,7 @@ def generate_pdf_report(output_path: str,
     yearly = stats_result.get("yearly", {})
     selected = stats_result.get("selected_metrics", [])
 
-    if yearly:
+    if "statistical" in sections and yearly:
         # Filter out non-table metrics
         table_metrics = [m for m in selected
                          if m not in ("monthly_totals", "seasonal_profile",
@@ -1050,7 +1111,7 @@ def generate_pdf_report(output_path: str,
             story.append(Spacer(1, 6 * mm))
 
     # --- Monthly Totals Bar Charts ---
-    if "monthly_totals" in selected and yearly:
+    if "statistical" in sections and "monthly_totals" in selected and yearly:
         first_chart = True
         for col_name, col_stats in yearly.items():
             monthly = col_stats.get("monthly_totals", {})
@@ -1071,7 +1132,7 @@ def generate_pdf_report(output_path: str,
 
     # --- Seasonal Weekly Profiles ---
     seasonal = stats_result.get("seasonal", {})
-    if "seasonal_profile" in selected and seasonal:
+    if "statistical" in sections and "seasonal_profile" in selected and seasonal:
         story.append(PageBreak())
         story.append(_section_heading("Seasonal Weekly Load Profiles"))
         story.append(Spacer(1, 4 * mm))
@@ -1091,7 +1152,7 @@ def generate_pdf_report(output_path: str,
 
     # --- Peak Consumption Analysis ---
     peaks = stats_result.get("peaks", {})
-    if "peak_analysis" in selected and peaks:
+    if "peak_analysis" in sections and "peak_analysis" in selected and peaks:
         story.append(PageBreak())
         story.append(_section_heading("Peak Consumption Analysis"))
         story.append(Spacer(1, 4 * mm))
@@ -1182,7 +1243,7 @@ def generate_pdf_report(output_path: str,
 
     # --- Frequency Histogram ---
     histogram = stats_result.get("histogram", {})
-    if "frequency_histogram" in selected and histogram:
+    if "statistical" in sections and "frequency_histogram" in selected and histogram:
         story.append(PageBreak())
         story.append(_section_heading("Frequency Distribution"))
         story.append(Spacer(1, 4 * mm))
@@ -1210,7 +1271,7 @@ def generate_pdf_report(output_path: str,
 
     # --- Cumulative Distribution ---
     cdf = stats_result.get("cdf", {})
-    if "cumulative_distribution" in selected and cdf:
+    if "statistical" in sections and "cumulative_distribution" in selected and cdf:
         story.append(PageBreak())
         story.append(_section_heading("Cumulative Distribution"))
         story.append(Spacer(1, 4 * mm))
@@ -1264,7 +1325,7 @@ def generate_pdf_report(output_path: str,
 
     # --- Peak Hour Frequency ---
     peak_hours = stats_result.get("peak_hours", {})
-    if "peak_hour_frequency" in selected and peak_hours:
+    if "peak_analysis" in sections and "peak_hour_frequency" in selected and peak_hours:
         story.append(PageBreak())
         story.append(_section_heading("Peak Event Frequency by Hour"))
         story.append(Spacer(1, 4 * mm))
@@ -1314,7 +1375,7 @@ def generate_pdf_report(output_path: str,
             story.append(Spacer(1, 4 * mm))
 
     # --- Energy Cost Simulation ---
-    if cost_simulation_data:
+    if "cost_estimation" in sections and cost_simulation_data:
         story.append(PageBreak())
         story.append(_section_heading("Energy Cost Simulation"))
         story.append(Spacer(1, 4 * mm))
@@ -1513,7 +1574,7 @@ def generate_pdf_report(output_path: str,
             story.append(Spacer(1, 6 * mm))
 
     # --- Battery Dimensioning Analysis ---
-    if battery_data:
+    if "battery" in sections and battery_data:
         story.append(PageBreak())
         story.append(_section_heading("Battery Dimensioning Analysis"))
         story.append(Spacer(1, 4 * mm))
@@ -1719,7 +1780,7 @@ def generate_pdf_report(output_path: str,
 
     def on_page(canvas, doc_ref):
         _header_footer(canvas, doc_ref, logo_path=logo_path,
-                        site_name=_site_name)
+                        site_name=_site_name, report_title=report_title)
 
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
 
