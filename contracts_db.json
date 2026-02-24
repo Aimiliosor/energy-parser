@@ -13,9 +13,7 @@
       "Brugel / Sibelga — Distribution rates 2025-2029"
     ]
   },
-
   "contracts": [
-
     {
       "id": "FR-HTA-FIXED-5P",
       "contract_name": "France HTA — Fixed Price, 5 Periods (Pointe Fixe)",
@@ -28,54 +26,104 @@
         "time_periods": [
           {
             "name": "Pointe (P)",
-            "price_eur_per_kwh": 0.220,
-            "grid_energy_eur_per_kwh": 0.0410,
-            "months": [12, 1, 2],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.041,
+            "months": [
+              12,
+              1,
+              2
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "09:00",
             "end_time": "10:59",
             "notes": "Winter peak: Dec-Feb, Mon-Fri, 9h-11h (pointe fixe calendar)"
           },
           {
             "name": "Heures Pleines Hiver (HPH)",
-            "price_eur_per_kwh": 0.165,
-            "grid_energy_eur_per_kwh": 0.0310,
-            "months": [11, 12, 1, 2, 3],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.031,
+            "months": [
+              11,
+              12,
+              1,
+              2,
+              3
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "06:00",
             "end_time": "21:59",
             "notes": "Winter full hours: Nov-Mar, Mon-Fri, 6h-22h (excl. peak hours)"
           },
           {
             "name": "Heures Creuses Hiver (HCH)",
-            "price_eur_per_kwh": 0.120,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0195,
-            "months": [11, 12, 1, 2, 3],
+            "months": [
+              11,
+              12,
+              1,
+              2,
+              3
+            ],
             "start_time": "22:00",
             "end_time": "05:59",
             "notes": "Winter off-peak: Nov-Mar, 22h-6h + weekends"
           },
           {
             "name": "Heures Pleines Été (HPE)",
-            "price_eur_per_kwh": 0.110,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0195,
-            "months": [4, 5, 6, 7, 8, 9, 10],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "06:00",
             "end_time": "21:59",
             "notes": "Summer full hours: Apr-Oct, Mon-Fri, 6h-22h"
           },
           {
             "name": "Heures Creuses Été (HCE)",
-            "price_eur_per_kwh": 0.080,
-            "grid_energy_eur_per_kwh": 0.0120,
-            "months": [4, 5, 6, 7, 8, 9, 10],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.012,
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
             "start_time": "22:00",
             "end_time": "05:59",
             "notes": "Summer off-peak: Apr-Oct, 22h-6h + weekends"
           }
         ],
-        "flat_price_eur_per_kwh": 0.130
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 58.44,
@@ -90,10 +138,10 @@
         "notes": "TURPE 7 HTA pointe fixe. Overshoot (CMDPS) = coefficient × dépassement mensuel. Reactive power now billed year-round in TURPE 7."
       },
       "taxes": {
-        "excise_eur_per_kwh": 0.02250,
+        "excise_eur_per_kwh": 0.0225,
         "renewable_levy_eur_per_kwh": 0.0,
         "other_levies_eur_per_kwh": 0.00312,
-        "vat_rate": 0.20,
+        "vat_rate": 0.2,
         "vat_applicable": false,
         "notes": "Accise sur l'électricité (ex-TICFE) = 22.50 €/MWh for businesses. CTA ≈ 27.04% of fixed TURPE component (CG+CC). VAT recoverable for B2B."
       },
@@ -105,7 +153,6 @@
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "FR-HTA-FIXED-5P-PV",
       "contract_name": "France HTA — Fixed Price, 5 Periods + PV Autoconsumption",
@@ -118,49 +165,99 @@
         "time_periods": [
           {
             "name": "Pointe (P)",
-            "price_eur_per_kwh": 0.220,
-            "grid_energy_eur_per_kwh": 0.0410,
-            "months": [12, 1, 2],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.041,
+            "months": [
+              12,
+              1,
+              2
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "09:00",
             "end_time": "10:59"
           },
           {
             "name": "Heures Pleines Hiver (HPH)",
-            "price_eur_per_kwh": 0.165,
-            "grid_energy_eur_per_kwh": 0.0310,
-            "months": [11, 12, 1, 2, 3],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.031,
+            "months": [
+              11,
+              12,
+              1,
+              2,
+              3
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "06:00",
             "end_time": "21:59"
           },
           {
             "name": "Heures Creuses Hiver (HCH)",
-            "price_eur_per_kwh": 0.120,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0195,
-            "months": [11, 12, 1, 2, 3],
+            "months": [
+              11,
+              12,
+              1,
+              2,
+              3
+            ],
             "start_time": "22:00",
             "end_time": "05:59"
           },
           {
             "name": "Heures Pleines Été (HPE)",
-            "price_eur_per_kwh": 0.110,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0195,
-            "months": [4, 5, 6, 7, 8, 9, 10],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "06:00",
             "end_time": "21:59"
           },
           {
             "name": "Heures Creuses Été (HCE)",
-            "price_eur_per_kwh": 0.080,
-            "grid_energy_eur_per_kwh": 0.0120,
-            "months": [4, 5, 6, 7, 8, 9, 10],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.012,
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
             "start_time": "22:00",
             "end_time": "05:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.130
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 58.44,
@@ -174,10 +271,10 @@
         "overshoot_reference": "subscribed"
       },
       "taxes": {
-        "excise_eur_per_kwh": 0.02250,
+        "excise_eur_per_kwh": 0.0225,
         "renewable_levy_eur_per_kwh": 0.0,
         "other_levies_eur_per_kwh": 0.00312,
-        "vat_rate": 0.20,
+        "vat_rate": 0.2,
         "vat_applicable": false
       },
       "production": {
@@ -201,7 +298,6 @@
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "FR-HTA-SPOT",
       "contract_name": "France HTA — EPEX Spot + Spread",
@@ -212,9 +308,9 @@
       "energy": {
         "price_type": "spot",
         "index_name": "EPEX Spot FR Day-Ahead",
-        "index_base_eur_per_kwh": 0.008,
+        "index_base_eur_per_kwh": 0,
         "time_periods": [],
-        "flat_price_eur_per_kwh": 0.065,
+        "flat_price_eur_per_kwh": 0,
         "notes": "Energy cost = EPEX Spot hourly price + 0.8 c€/kWh spread. Flat price is an annual average estimate only — actual varies hourly. For simulation, use historical EPEX data if available."
       },
       "grid": {
@@ -229,19 +325,20 @@
         "overshoot_reference": "subscribed"
       },
       "taxes": {
-        "excise_eur_per_kwh": 0.02250,
+        "excise_eur_per_kwh": 0.0225,
         "renewable_levy_eur_per_kwh": 0.0,
         "other_levies_eur_per_kwh": 0.00312,
-        "vat_rate": 0.20,
+        "vat_rate": 0.2,
         "vat_applicable": false
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "FR-BT-SUP36-4P",
       "contract_name": "France BT >36 kVA — 4 Periods",
@@ -254,40 +351,80 @@
         "time_periods": [
           {
             "name": "Heures Pleines Hiver (HPH)",
-            "price_eur_per_kwh": 0.185,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0749,
-            "months": [11, 12, 1, 2, 3],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "months": [
+              11,
+              12,
+              1,
+              2,
+              3
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "06:00",
             "end_time": "21:59"
           },
           {
             "name": "Heures Creuses Hiver (HCH)",
-            "price_eur_per_kwh": 0.140,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0397,
-            "months": [11, 12, 1, 2, 3],
+            "months": [
+              11,
+              12,
+              1,
+              2,
+              3
+            ],
             "start_time": "22:00",
             "end_time": "05:59"
           },
           {
             "name": "Heures Pleines Été (HPE)",
-            "price_eur_per_kwh": 0.140,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0166,
-            "months": [4, 5, 6, 7, 8, 9, 10],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "06:00",
             "end_time": "21:59"
           },
           {
             "name": "Heures Creuses Été (HCE)",
-            "price_eur_per_kwh": 0.105,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.0116,
-            "months": [4, 5, 6, 7, 8, 9, 10],
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
             "start_time": "22:00",
             "end_time": "05:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.150
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 80.16,
@@ -302,19 +439,20 @@
         "notes": "TURPE 7 BT >36kVA. Puissance souscrite per period. CMDPS applies per monthly overshoot."
       },
       "taxes": {
-        "excise_eur_per_kwh": 0.02250,
+        "excise_eur_per_kwh": 0.0225,
         "renewable_levy_eur_per_kwh": 0.0,
         "other_levies_eur_per_kwh": 0.00312,
-        "vat_rate": 0.20,
+        "vat_rate": 0.2,
         "vat_applicable": false
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "FR-BT-INF36-BASE",
       "contract_name": "France BT ≤36 kVA — Base (CU4)",
@@ -325,34 +463,35 @@
       "energy": {
         "price_type": "fixed",
         "time_periods": [],
-        "flat_price_eur_per_kwh": 0.2516,
+        "flat_price_eur_per_kwh": 0,
         "notes": "TRV (tarif réglementé) Base rate as of Aug 2025. Market offers typically 5-15% below TRV."
       },
       "grid": {
-        "capacity_charge_eur_per_kw_year": 10.10,
+        "capacity_charge_eur_per_kw_year": 10.1,
         "subscribed_power_kw": 9,
         "connection_power_limit_kw": 12,
-        "flat_grid_energy_eur_per_kwh": 0.0440,
+        "flat_grid_energy_eur_per_kwh": 0.044,
         "time_differentiated": false,
         "overshoot_penalty_eur_per_kw": 0,
         "overshoot_reference": "subscribed",
         "notes": "TURPE 7 BT ≤36 kVA CU4. Disjoncteur protects against overshoot — no CMDPS, just cut-off."
       },
       "taxes": {
-        "excise_eur_per_kwh": 0.02250,
+        "excise_eur_per_kwh": 0.0225,
         "renewable_levy_eur_per_kwh": 0.0,
         "other_levies_eur_per_kwh": 0.00312,
-        "vat_rate": 0.20,
+        "vat_rate": 0.2,
         "vat_applicable": true,
         "notes": "Residential: TVA 20% on energy+excise, 5.5% on CTA. Simplified here as 20%."
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "FR-BT-INF36-HPHC",
       "contract_name": "France BT ≤36 kVA — HP/HC (MU4)",
@@ -365,50 +504,92 @@
         "time_periods": [
           {
             "name": "Heures Pleines",
-            "price_eur_per_kwh": 0.2700,
-            "grid_energy_eur_per_kwh": 0.0520,
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.052,
             "start_time": "06:00",
             "end_time": "21:59",
-            "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-            "months": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ]
           },
           {
             "name": "Heures Creuses",
-            "price_eur_per_kwh": 0.2068,
-            "grid_energy_eur_per_kwh": 0.0280,
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.028,
             "start_time": "22:00",
             "end_time": "05:59",
-            "days_of_week": [0, 1, 2, 3, 4, 5, 6],
-            "months": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ]
           }
         ],
-        "flat_price_eur_per_kwh": 0.240,
+        "flat_price_eur_per_kwh": 0,
         "notes": "TRV HP/HC as of Aug 2025. HC = typically 22h-6h (8h). From 2027, afternoon HC may apply in summer."
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 12.12,
         "subscribed_power_kw": 9,
         "connection_power_limit_kw": 12,
-        "flat_grid_energy_eur_per_kwh": 0.040,
+        "flat_grid_energy_eur_per_kwh": 0.04,
         "time_differentiated": true,
         "overshoot_penalty_eur_per_kw": 0,
         "overshoot_reference": "subscribed"
       },
       "taxes": {
-        "excise_eur_per_kwh": 0.02250,
+        "excise_eur_per_kwh": 0.0225,
         "renewable_levy_eur_per_kwh": 0.0,
         "other_levies_eur_per_kwh": 0.00312,
-        "vat_rate": 0.20,
+        "vat_rate": 0.2,
         "vat_applicable": true
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
-
     {
       "id": "BE-FL-MV-FIXED",
       "contract_name": "Belgium Flanders MV — Fixed Price (Fluvius)",
@@ -421,39 +602,87 @@
         "time_periods": [
           {
             "name": "Day (werkdag)",
-            "price_eur_per_kwh": 0.090,
-            "grid_energy_eur_per_kwh": 0.0220,
-            "months": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.022,
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night (nacht)",
-            "price_eur_per_kwh": 0.070,
-            "grid_energy_eur_per_kwh": 0.0140,
-            "months": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.014,
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ],
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.070,
-            "grid_energy_eur_per_kwh": 0.0140,
-            "months": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-            "days_of_week": [5, 6],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.014,
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.082,
+        "flat_price_eur_per_kwh": 0,
         "notes": "Energy prices are indicative for 2025 market. Since 2023, no day/night distinction on grid fees for Fluvius (capacity tariff replaces it). Energy supplier may still differentiate."
       },
       "grid": {
-        "capacity_charge_eur_per_kw_year": 48.00,
+        "capacity_charge_eur_per_kw_year": 48.0,
         "subscribed_power_kw": 500,
         "connection_power_limit_kw": 630,
-        "flat_grid_energy_eur_per_kwh": 0.0180,
+        "flat_grid_energy_eur_per_kwh": 0.018,
         "time_differentiated": true,
         "reactive_power_penalty_eur_per_kvarh": 0.0,
         "cos_phi_threshold": 0.9,
@@ -469,13 +698,14 @@
         "vat_applicable": false,
         "notes": "Federal energy excise (accijns) = 47.48 €/MWh (consolidated since July 2023). Includes social tariff funding + nuclear provisions. Green certificate costs embedded in Fluvius grid tariff. VAT = 6% (permanent since 2023), but recoverable for B2B."
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-FL-MV-FIXED-PV",
       "contract_name": "Belgium Flanders MV — Fixed Price + PV (Fluvius)",
@@ -488,35 +718,44 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.090,
-            "grid_energy_eur_per_kwh": 0.0220,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.022,
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.070,
-            "grid_energy_eur_per_kwh": 0.0140,
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.014,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.070,
-            "grid_energy_eur_per_kwh": 0.0140,
-            "days_of_week": [5, 6],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.014,
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.082
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
-        "capacity_charge_eur_per_kw_year": 48.00,
+        "capacity_charge_eur_per_kw_year": 48.0,
         "subscribed_power_kw": 500,
         "connection_power_limit_kw": 630,
-        "flat_grid_energy_eur_per_kwh": 0.0180,
+        "flat_grid_energy_eur_per_kwh": 0.018,
         "time_differentiated": true,
         "overshoot_penalty_eur_per_kw": 120.0,
         "overshoot_reference": "subscribed"
@@ -549,7 +788,6 @@
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-FL-LV-FIXED",
       "contract_name": "Belgium Flanders LV — Fixed Price (Fluvius, Capacity Tariff)",
@@ -562,29 +800,38 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.115,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.048,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.090,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.038,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.090,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.038,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.105
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 42.0,
@@ -604,13 +851,14 @@
         "vat_applicable": true,
         "notes": "For LV non-VAT-registered (residential): 6% VAT applies. For B2B with VAT registration: recoverable."
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-FL-LV-DYNAMIC",
       "contract_name": "Belgium Flanders LV — Dynamic (EPEX Spot BE)",
@@ -621,9 +869,9 @@
       "energy": {
         "price_type": "spot",
         "index_name": "EPEX Spot BE Day-Ahead",
-        "index_base_eur_per_kwh": 0.005,
+        "index_base_eur_per_kwh": 0,
         "time_periods": [],
-        "flat_price_eur_per_kwh": 0.075,
+        "flat_price_eur_per_kwh": 0,
         "notes": "Price = hourly EPEX Spot BE + ~0.5 c€/kWh spread. Flat price is annual average estimate. Can go negative. Available in Flanders since 2023, Brussels since June 2025."
       },
       "grid": {
@@ -642,13 +890,14 @@
         "vat_rate": 0.06,
         "vat_applicable": true
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-WAL-MV-FIXED",
       "contract_name": "Belgium Wallonia MV — Fixed Price (ORES/RESA)",
@@ -661,35 +910,44 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.092,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.024,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.072,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.015,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.072,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.015,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.084
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 52.0,
         "subscribed_power_kw": 400,
         "connection_power_limit_kw": 500,
-        "flat_grid_energy_eur_per_kwh": 0.020,
+        "flat_grid_energy_eur_per_kwh": 0.02,
         "time_differentiated": true,
         "reactive_power_penalty_eur_per_kvarh": 0.012,
         "cos_phi_threshold": 0.9,
@@ -705,13 +963,14 @@
         "vat_applicable": false,
         "notes": "Wallonia: 'soutien renouvelables' surcharge for green certificates on top of federal excise. Separate from Flanders mechanism."
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-WAL-MV-FIXED-PV-GC",
       "contract_name": "Belgium Wallonia MV — Fixed + PV with Green Certificates",
@@ -724,35 +983,44 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.092,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.024,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.072,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.015,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.072,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.015,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.084
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 52.0,
         "subscribed_power_kw": 400,
         "connection_power_limit_kw": 500,
-        "flat_grid_energy_eur_per_kwh": 0.020,
+        "flat_grid_energy_eur_per_kwh": 0.02,
         "time_differentiated": true,
         "reactive_power_penalty_eur_per_kvarh": 0.012,
         "cos_phi_threshold": 0.9,
@@ -787,7 +1055,6 @@
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-WAL-LV-INCENTIVE-2026",
       "contract_name": "Belgium Wallonia LV — Incentive Tariff 2026 (CWaPE)",
@@ -800,34 +1067,52 @@
         "time_periods": [
           {
             "name": "High (morning peak)",
-            "price_eur_per_kwh": 0.130,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.068,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "09:59",
             "notes": "Morning ramp: highest grid cost"
           },
           {
             "name": "High (evening peak)",
-            "price_eur_per_kwh": 0.130,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.068,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "17:00",
             "end_time": "20:59",
             "notes": "Evening peak: highest grid cost"
           },
           {
             "name": "Medium (off-peak day)",
-            "price_eur_per_kwh": 0.110,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.045,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "10:00",
             "end_time": "16:59",
             "notes": "Daytime off-peak: medium cost"
           },
           {
             "name": "Low (night)",
-            "price_eur_per_kwh": 0.085,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.025,
             "start_time": "21:00",
             "end_time": "06:59",
@@ -835,15 +1120,18 @@
           },
           {
             "name": "Low (weekend)",
-            "price_eur_per_kwh": 0.085,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.025,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59",
             "notes": "Full weekend at low rate"
           }
         ],
-        "flat_price_eur_per_kwh": 0.108
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 0,
@@ -862,13 +1150,14 @@
         "vat_rate": 0.06,
         "vat_applicable": true
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-BXL-MV-FIXED",
       "contract_name": "Belgium Brussels MV — Fixed Price (Sibelga)",
@@ -881,29 +1170,38 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.095,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.026,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.075,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.016,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.075,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.016,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.087
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 55.0,
@@ -911,7 +1209,7 @@
         "connection_power_limit_kw": 400,
         "flat_grid_energy_eur_per_kwh": 0.022,
         "time_differentiated": true,
-        "reactive_power_penalty_eur_per_kvarh": 0.010,
+        "reactive_power_penalty_eur_per_kvarh": 0.01,
         "cos_phi_threshold": 0.9,
         "overshoot_penalty_eur_per_kw": 140.0,
         "overshoot_reference": "subscribed",
@@ -925,13 +1223,14 @@
         "vat_applicable": false,
         "notes": "Brussels: green certificate fee embedded in distribution tariff. 3 CV/MWh for PV <5 kWp. Net metering 1:1 still active (ending 2027-2028)."
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-BXL-LV-FIXED",
       "contract_name": "Belgium Brussels LV — Fixed Price (Sibelga)",
@@ -944,29 +1243,38 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.120,
-            "grid_energy_eur_per_kwh": 0.060,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.06,
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.095,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.045,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.095,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.045,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.110
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 0,
@@ -985,13 +1293,14 @@
         "vat_rate": 0.06,
         "vat_applicable": true
       },
-      "production": { "has_production": false },
+      "production": {
+        "has_production": false
+      },
       "penalties": {
         "minimum_offtake_kwh_year": 0,
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-BXL-LV-PV-NETMETERING",
       "contract_name": "Belgium Brussels LV — PV with Net Metering (Sibelga)",
@@ -1004,29 +1313,38 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.120,
-            "grid_energy_eur_per_kwh": 0.060,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "price_eur_per_kwh": 0,
+            "grid_energy_eur_per_kwh": 0.06,
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.095,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.045,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.095,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.045,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.110
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 0,
@@ -1065,7 +1383,6 @@
         "minimum_offtake_penalty_eur_per_kwh": 0
       }
     },
-
     {
       "id": "BE-FL-LV-PV-PROSUMER",
       "contract_name": "Belgium Flanders LV — PV with Prosumer Tariff (Fluvius)",
@@ -1078,29 +1395,38 @@
         "time_periods": [
           {
             "name": "Day",
-            "price_eur_per_kwh": 0.115,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.048,
-            "days_of_week": [0, 1, 2, 3, 4],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
             "start_time": "07:00",
             "end_time": "21:59"
           },
           {
             "name": "Night",
-            "price_eur_per_kwh": 0.090,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.038,
             "start_time": "22:00",
             "end_time": "06:59"
           },
           {
             "name": "Weekend",
-            "price_eur_per_kwh": 0.090,
+            "price_eur_per_kwh": 0,
             "grid_energy_eur_per_kwh": 0.038,
-            "days_of_week": [5, 6],
+            "days_of_week": [
+              5,
+              6
+            ],
             "start_time": "00:00",
             "end_time": "23:59"
           }
         ],
-        "flat_price_eur_per_kwh": 0.105
+        "flat_price_eur_per_kwh": 0
       },
       "grid": {
         "capacity_charge_eur_per_kw_year": 42.0,
