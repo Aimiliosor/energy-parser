@@ -189,7 +189,8 @@ def generate_peak_heatmap(hourly_dist: dict, daily_dist: dict,
         matrix = np.zeros((24, 7))
 
     fig, ax = plt.subplots(figsize=(8, 4.5), dpi=120)
-    im = ax.imshow(matrix, aspect="auto", cmap="YlOrRd", interpolation="nearest")
+    im = ax.imshow(matrix, aspect="auto", cmap="YlOrRd", interpolation="nearest",
+                    vmin=0)
     ax.set_xticks(range(7))
     ax.set_xticklabels([d[:3] for d in DAY_ORDER], fontsize=8)
     ax.set_yticks(range(0, 24, 3))
