@@ -55,7 +55,7 @@ from energy_parser.contract_model import (
     save_contract_json, load_contract_json,
     load_contracts_db, save_contracts_db, get_default_db_path,
 )
-from energy_parser.cost_simulator import CostSimulator, CostBreakdown, compare_scenarios
+from energy_parser.cost_simulator import CostSimulator, CostBreakdown
 from energy_parser.exporter import save_cost_simulation_xlsx
 
 
@@ -217,8 +217,6 @@ class EnergyParserGUI:
         self.battery_result = None
         self.cost_simulation_result = None  # (detail_df, summary, monthly)
         self.cost_contract = None           # Current EnergyContract
-        self.cost_scenarios = {}            # {name: EnergyContract} for comparison
-        self.cost_comparison_df = None      # DataFrame from compare_scenarios
 
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
@@ -1575,12 +1573,6 @@ class EnergyParserGUI:
                         "monthly_bar": monthly_bar,
                     }
 
-                    # Add scenario comparison chart if available
-                    if self.cost_comparison_df is not None:
-                        comp_data = self.cost_comparison_df.to_dict("records")
-                        charts["scenario_comparison"] = (
-                            generate_scenario_comparison_chart(comp_data))
-
                     contract_summary = ""
                     if self.cost_contract:
                         contract_summary = self.cost_contract.summary()
@@ -1590,9 +1582,7 @@ class EnergyParserGUI:
                         "summary": summary_dict,
                         "monthly": monthly_dict,
                         "charts": charts,
-                        "comparison": (
-                            self.cost_comparison_df.to_dict("records")
-                            if self.cost_comparison_df is not None else []),
+                        "comparison": [],
                     }
                 except Exception:
                     pass  # Non-critical
@@ -2057,18 +2047,6 @@ class EnergyParserGUI:
             bg=COLORS["secondary"], width=160, height=40)
         self.simulate_btn.pack(side=tk.LEFT, padx=5)
 
-        self.add_scenario_btn = ModernButton(
-            sim_btn_row, "Add as Scenario",
-            command=self._add_scenario,
-            bg=COLORS["primary"], width=150, height=40)
-        self.add_scenario_btn.pack(side=tk.LEFT, padx=5)
-
-        self.compare_btn = ModernButton(
-            sim_btn_row, "Compare Scenarios",
-            command=self._run_scenario_comparison,
-            bg=COLORS["primary"], width=160, height=40)
-        self.compare_btn.pack(side=tk.LEFT, padx=5)
-
         self.export_contract_btn = ModernButton(
             sim_btn_row, "Export Contract JSON",
             command=self._export_contract_json,
@@ -2081,13 +2059,6 @@ class EnergyParserGUI:
             command=self._export_cost_xlsx,
             bg=COLORS["success"], width=150, height=40)
         self.export_cost_xlsx_btn.pack(side=tk.LEFT, padx=5)
-
-        # Scenario list label
-        self.scenario_label = tk.Label(
-            content, text="Scenarios: (none)",
-            font=("Segoe UI", 9), bg=COLORS["white"],
-            fg=COLORS["text_dark"])
-        self.scenario_label.pack(anchor=tk.W, pady=2)
 
         # --- Results Frame ---
         self.cost_results_frame = tk.Frame(content, bg=COLORS["white"])
@@ -3261,98 +3232,6 @@ class EnergyParserGUI:
                 cap = self.cost_contract.grid.capacity_charge_eur_per_kw_year
                 self.peak_tariff_var.set(str(round(cap / 12, 1)))
 
-    # --- Scenario Comparison ---
-
-    def _add_scenario(self):
-        """Add current contract as a comparison scenario."""
-        if self.cost_contract is None:
-            messagebox.showwarning("Warning",
-                                   "Please load a contract first.")
-            return
-        name = self.cost_contract.contract_name
-        if not name:
-            name = f"Scenario {len(self.cost_scenarios) + 1}"
-        self.cost_scenarios[name] = self.cost_contract
-        self._update_scenario_label()
-        messagebox.showinfo("Scenario Added",
-                            f"'{name}' added to comparison "
-                            f"({len(self.cost_scenarios)} total).")
-
-    def _update_scenario_label(self):
-        """Update the scenario list label."""
-        if self.cost_scenarios:
-            names = ", ".join(self.cost_scenarios.keys())
-            self.scenario_label.config(
-                text=f"Scenarios: {names}")
-        else:
-            self.scenario_label.config(text="Scenarios: (none)")
-
-    def _run_scenario_comparison(self):
-        """Run comparison across all added scenarios."""
-        if len(self.cost_scenarios) < 2:
-            messagebox.showwarning("Warning",
-                                   "Add at least 2 scenarios to compare.")
-            return
-
-        if self.transformed_df is None:
-            messagebox.showwarning("Warning",
-                                   "Please transform data first.")
-            return
-
-        self.update_progress(10, "Running scenario comparison...")
-
-        try:
-            df = self.transformed_df.copy()
-            df["Date & Time"] = pd.to_datetime(df["Date & Time"])
-            cons_df = df.set_index("Date & Time")[["Consumption (kW)"]].rename(
-                columns={"Consumption (kW)": "consumption_kw"})
-
-            prod_df = None
-            if "Production (kW)" in df.columns:
-                prod_df = df.set_index("Date & Time")[["Production (kW)"]].rename(
-                    columns={"Production (kW)": "production_kw"})
-
-            self.update_progress(40, "Comparing scenarios...")
-
-            self.cost_comparison_df = compare_scenarios(
-                cons_df, prod_df, self.cost_scenarios)
-
-            self.update_progress(70, "Generating comparison chart...")
-
-            # Display comparison
-            comparison_data = self.cost_comparison_df.to_dict("records")
-            chart_bytes = generate_scenario_comparison_chart(
-                comparison_data)
-
-            img = Image.open(io.BytesIO(chart_bytes))
-            display_width = 750
-            ratio = display_width / img.width
-            display_height = int(img.height * ratio)
-            img = img.resize((display_width, display_height),
-                             Image.Resampling.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
-            self._cost_chart_images.append(photo)
-            label = tk.Label(self.cost_chart_frame, image=photo,
-                             bg=COLORS["white"])
-            label.pack(pady=3)
-
-            # Show comparison table in results
-            comp_text = tk.Text(self.cost_results_frame, height=6,
-                                width=100, font=("Consolas", 8),
-                                bg=COLORS["bg"], fg=COLORS["text_dark"],
-                                relief=tk.FLAT, padx=10, pady=10)
-            comp_text.pack(fill=tk.X, pady=5)
-            comp_text.insert(tk.END,
-                             self.cost_comparison_df.to_string(index=False))
-            comp_text.config(state=tk.DISABLED)
-
-            self.update_progress(100, "Scenario comparison complete!")
-
-        except Exception as e:
-            self.update_progress(0, "Scenario comparison failed")
-            messagebox.showerror("Error",
-                                 f"Comparison failed:\n{str(e)}")
-
     # --- Export Methods ---
 
     def _export_contract_json(self):
@@ -3433,12 +3312,8 @@ class EnergyParserGUI:
                     "peak_demand_kw": mb.peak_demand_kw,
                 }
 
-            comparison = None
-            if self.cost_comparison_df is not None:
-                comparison = self.cost_comparison_df.to_dict("records")
-
             save_cost_simulation_xlsx(save_path, summary_dict,
-                                      monthly_dict, comparison)
+                                      monthly_dict)
             messagebox.showinfo("Exported",
                                 f"Cost simulation saved to:\n{save_path}")
 
