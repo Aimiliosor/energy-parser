@@ -13,6 +13,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from contextlib import redirect_stdout, redirect_stderr
+from datetime import time
 import pandas as pd
 from PIL import Image, ImageTk
 
