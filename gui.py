@@ -1930,6 +1930,7 @@ class EnergyParserGUI:
             ("manual", "Manual Input"),
             ("import", "Import from CSV/Excel/JSON"),
         ]
+        self._cost_method_frame = method_frame
         method_radio_frame = tk.Frame(method_frame, bg=COLORS["white"])
         method_radio_frame.pack(fill=tk.X)
         for val, label in methods:
@@ -2102,12 +2103,12 @@ class EnergyParserGUI:
         self.battery_link_frame.pack(fill=tk.X, pady=5)
 
     def _create_manual_contract_form(self):
-        """Build the manual contract input form."""
+        """Build the manual contract input form with collapsible sections."""
         parent = self.contract_manual_frame
 
         # Use a canvas with scrollbar for the long form
         form_canvas = tk.Canvas(parent, bg=COLORS["white"],
-                                 highlightthickness=0, height=350)
+                                 highlightthickness=0, height=400)
         form_scrollbar = ttk.Scrollbar(parent, orient="vertical",
                                         command=form_canvas.yview)
         self.contract_form_inner = tk.Frame(form_canvas, bg=COLORS["white"])
@@ -2120,6 +2121,11 @@ class EnergyParserGUI:
                                    anchor="nw")
         form_canvas.configure(yscrollcommand=form_scrollbar.set)
 
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            form_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        form_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+
         form_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         form_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
@@ -2129,13 +2135,13 @@ class EnergyParserGUI:
         self._cf = {}  # contract form variables
 
         # --- General ---
-        self._add_form_section(form, "GENERAL")
+        sec_general = self._create_collapsible_section(form, "GENERAL")
         self._cf["contract_name"] = self._add_form_field(
-            form, "Contract Name:", "")
+            sec_general, "Contract Name:", "")
         self._cf["supplier"] = self._add_form_field(
-            form, "Supplier:", "")
+            sec_general, "Supplier:", "")
 
-        country_frame = tk.Frame(form, bg=COLORS["white"])
+        country_frame = tk.Frame(sec_general, bg=COLORS["white"])
         country_frame.pack(fill=tk.X, pady=2, padx=10)
         tk.Label(country_frame, text="Country:", width=22, anchor=tk.W,
                  font=("Segoe UI", 9), bg=COLORS["white"]).pack(
@@ -2145,8 +2151,11 @@ class EnergyParserGUI:
                      values=["BE", "FR", "NL", "DE"],
                      width=10, state="readonly",
                      font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Label(country_frame, text="BE=Belgium, FR=France",
+                 font=("Segoe UI", 7, "italic"),
+                 bg=COLORS["white"], fg="#888").pack(side=tk.LEFT, padx=5)
 
-        vl_frame = tk.Frame(form, bg=COLORS["white"])
+        vl_frame = tk.Frame(sec_general, bg=COLORS["white"])
         vl_frame.pack(fill=tk.X, pady=2, padx=10)
         tk.Label(vl_frame, text="Voltage Level:", width=22, anchor=tk.W,
                  font=("Segoe UI", 9), bg=COLORS["white"]).pack(
@@ -2156,11 +2165,14 @@ class EnergyParserGUI:
                      values=["LV", "MV", "HV"],
                      width=10, state="readonly",
                      font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Label(vl_frame, text="LV=Low, MV=Medium, HV=High",
+                 font=("Segoe UI", 7, "italic"),
+                 bg=COLORS["white"], fg="#888").pack(side=tk.LEFT, padx=5)
 
         # --- Energy Charges ---
-        self._add_form_section(form, "ENERGY CHARGES")
+        sec_energy = self._create_collapsible_section(form, "ENERGY CHARGES")
 
-        pt_frame = tk.Frame(form, bg=COLORS["white"])
+        pt_frame = tk.Frame(sec_energy, bg=COLORS["white"])
         pt_frame.pack(fill=tk.X, pady=2, padx=10)
         tk.Label(pt_frame, text="Price Type:", width=22, anchor=tk.W,
                  font=("Segoe UI", 9), bg=COLORS["white"]).pack(
@@ -2170,122 +2182,116 @@ class EnergyParserGUI:
                      values=["fixed", "indexed", "spot", "bloc_spot"],
                      width=12, state="readonly",
                      font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Label(pt_frame, text="fixed / indexed / spot / bloc+spot",
+                 font=("Segoe UI", 7, "italic"),
+                 bg=COLORS["white"], fg="#888").pack(side=tk.LEFT, padx=5)
 
         self._cf["flat_price"] = self._add_form_field(
-            form, "Flat Energy Price (\u20ac/kWh):", "0.10",
-            tooltip="Used when no time-of-use periods are defined")
+            sec_energy, "Flat Energy Price (\u20ac/kWh):", "0.10",
+            tooltip="Fallback when no time-of-use periods match")
 
-        # Time-of-use periods
-        self._add_form_section(form, "TIME-OF-USE PERIODS")
-        tk.Label(form, text="Define up to 5 periods (leave blank to skip):",
+        # Time-of-use periods (collapsible sub-section)
+        sec_periods = self._create_collapsible_section(
+            form, "TIME-OF-USE PERIODS", initially_open=False)
+        tk.Label(sec_periods,
+                 text="Define time periods (leave name blank to skip):",
                  font=("Segoe UI", 8, "italic"),
-                 bg=COLORS["white"], fg=COLORS["light_gray"]).pack(
-                     anchor=tk.W, padx=10)
+                 bg=COLORS["white"], fg="#888").pack(anchor=tk.W, padx=10)
 
         self._cf["periods"] = []
+        self._periods_container = sec_periods
         for i in range(5):
-            pf = tk.Frame(form, bg=COLORS["bg"], relief=tk.FLAT, bd=1)
-            pf.pack(fill=tk.X, padx=10, pady=3)
+            self._add_period_row(sec_periods, i)
 
-            pv = {}
-            row1 = tk.Frame(pf, bg=COLORS["bg"])
-            row1.pack(fill=tk.X, padx=5, pady=2)
-            tk.Label(row1, text=f"Period {i+1}:", font=("Segoe UI", 8, "bold"),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT)
-            tk.Label(row1, text="Name:", font=("Segoe UI", 8),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(10, 2))
-            pv["name"] = tk.StringVar()
-            ttk.Entry(row1, textvariable=pv["name"], width=16,
-                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
-            tk.Label(row1, text="Price(\u20ac/kWh):", font=("Segoe UI", 8),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
-            pv["price"] = tk.StringVar()
-            ttk.Entry(row1, textvariable=pv["price"], width=8,
-                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
-            tk.Label(row1, text="Grid(\u20ac/kWh):", font=("Segoe UI", 8),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
-            pv["grid_price"] = tk.StringVar()
-            ttk.Entry(row1, textvariable=pv["grid_price"], width=8,
-                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
-
-            row2 = tk.Frame(pf, bg=COLORS["bg"])
-            row2.pack(fill=tk.X, padx=5, pady=2)
-            tk.Label(row2, text="Hours:", font=("Segoe UI", 8),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT)
-            pv["start_h"] = tk.StringVar(value="0")
-            ttk.Entry(row2, textvariable=pv["start_h"], width=4,
-                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
-            tk.Label(row2, text="-", font=("Segoe UI", 8),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT)
-            pv["end_h"] = tk.StringVar(value="23")
-            ttk.Entry(row2, textvariable=pv["end_h"], width=4,
-                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
-            tk.Label(row2, text="Days(0=Mon,6=Sun):", font=("Segoe UI", 8),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
-            pv["days"] = tk.StringVar(value="0,1,2,3,4,5,6")
-            ttk.Entry(row2, textvariable=pv["days"], width=16,
-                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
-            tk.Label(row2, text="Months(1-12):", font=("Segoe UI", 8),
-                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
-            pv["months"] = tk.StringVar(value="1,2,3,4,5,6,7,8,9,10,11,12")
-            ttk.Entry(row2, textvariable=pv["months"], width=24,
-                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
-
-            self._cf["periods"].append(pv)
+        add_period_btn = ModernButton(
+            sec_periods, "+ Add Period",
+            command=lambda: self._add_period_row(
+                sec_periods, len(self._cf["periods"])),
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=120, height=28)
+        add_period_btn.pack(anchor=tk.W, padx=10, pady=5)
 
         # --- Grid Fees ---
-        self._add_form_section(form, "GRID / NETWORK FEES")
+        sec_grid = self._create_collapsible_section(form, "GRID / NETWORK FEES")
         self._cf["capacity_charge"] = self._add_form_field(
-            form, "Capacity Charge (\u20ac/kW/year):", "0",
+            sec_grid, "Capacity Charge (\u20ac/kW/yr):", "0",
             tooltip="Annual fee per kW of subscribed power")
         self._cf["subscribed_power"] = self._add_form_field(
-            form, "Subscribed Power (kW):", "0")
+            sec_grid, "Subscribed Power (kW):", "0",
+            tooltip="Contracted peak demand (puissance souscrite)")
         self._cf["connection_limit"] = self._add_form_field(
-            form, "Connection Limit (kW):", "0")
+            sec_grid, "Connection Limit (kW):", "0",
+            tooltip="Physical connection limit (breaker size)")
         self._cf["flat_grid_energy"] = self._add_form_field(
-            form, "Flat Grid Energy (\u20ac/kWh):", "0",
+            sec_grid, "Flat Grid Energy (\u20ac/kWh):", "0",
             tooltip="Used if grid fees are NOT time-differentiated")
 
-        td_frame = tk.Frame(form, bg=COLORS["white"])
+        td_frame = tk.Frame(sec_grid, bg=COLORS["white"])
         td_frame.pack(fill=tk.X, pady=2, padx=10)
-        tk.Label(td_frame, text="Time-differentiated grid fees:",
+        tk.Label(td_frame, text="Time-diff. grid fees:",
                  width=22, anchor=tk.W, font=("Segoe UI", 9),
                  bg=COLORS["white"]).pack(side=tk.LEFT)
         self._cf["time_diff"] = tk.BooleanVar(value=False)
         tk.Checkbutton(td_frame, variable=self._cf["time_diff"],
+                       text="Use period-specific grid rates",
+                       font=("Segoe UI", 8),
                        bg=COLORS["white"], selectcolor=COLORS["white"]
                        ).pack(side=tk.LEFT)
 
         self._cf["overshoot_penalty"] = self._add_form_field(
-            form, "Overshoot Penalty (\u20ac/kW):", "0",
-            tooltip="Per kW exceeding subscribed power")
+            sec_grid, "Overshoot Penalty (\u20ac/kW):", "0",
+            tooltip="Per kW exceeding reference power (monthly)")
+
+        or_frame = tk.Frame(sec_grid, bg=COLORS["white"])
+        or_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(or_frame, text="Overshoot Reference:", width=22,
+                 anchor=tk.W, font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT)
+        self._cf["overshoot_ref"] = tk.StringVar(value="subscribed")
+        ttk.Combobox(or_frame, textvariable=self._cf["overshoot_ref"],
+                     values=["subscribed", "connection"],
+                     width=12, state="readonly",
+                     font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+
+        self._cf["reactive_penalty"] = self._add_form_field(
+            sec_grid, "Reactive Power (\u20ac/kvarh):", "0",
+            tooltip="Penalty for poor cos(phi)")
+        self._cf["cos_phi"] = self._add_form_field(
+            sec_grid, "cos(phi) Threshold:", "0.9",
+            tooltip="Penalty applies below this value")
 
         # --- Taxes ---
-        self._add_form_section(form, "TAXES & LEVIES")
+        sec_taxes = self._create_collapsible_section(form, "TAXES & LEVIES")
         self._cf["excise"] = self._add_form_field(
-            form, "Excise (\u20ac/kWh):", "0",
-            tooltip="Accijnzen (BE) / TICFE (FR)")
+            sec_taxes, "Excise (\u20ac/kWh):", "0",
+            tooltip="Accijnzen (BE) / Accise ex-TICFE (FR)")
         self._cf["renewable_levy"] = self._add_form_field(
-            form, "Renewable Levy (\u20ac/kWh):", "0")
+            sec_taxes, "Renewable Levy (\u20ac/kWh):", "0",
+            tooltip="Green certificate surcharge")
         self._cf["other_levies"] = self._add_form_field(
-            form, "Other Levies (\u20ac/kWh):", "0")
+            sec_taxes, "Other Levies (\u20ac/kWh):", "0",
+            tooltip="Federal contribution, CTA, etc.")
         self._cf["vat_rate"] = self._add_form_field(
-            form, "VAT Rate (decimal):", "0.21")
+            sec_taxes, "VAT Rate (decimal):", "0.21",
+            tooltip="0.21 = 21%, 0.06 = 6%")
 
-        vat_frame = tk.Frame(form, bg=COLORS["white"])
+        vat_frame = tk.Frame(sec_taxes, bg=COLORS["white"])
         vat_frame.pack(fill=tk.X, pady=2, padx=10)
         tk.Label(vat_frame, text="VAT Applicable:", width=22,
                  anchor=tk.W, font=("Segoe UI", 9),
                  bg=COLORS["white"]).pack(side=tk.LEFT)
         self._cf["vat_applicable"] = tk.BooleanVar(value=True)
         tk.Checkbutton(vat_frame, variable=self._cf["vat_applicable"],
+                       text="Apply VAT (uncheck for B2B)",
+                       font=("Segoe UI", 8),
                        bg=COLORS["white"], selectcolor=COLORS["white"]
                        ).pack(side=tk.LEFT)
 
         # --- Production ---
-        self._add_form_section(form, "ON-SITE PRODUCTION")
+        sec_prod = self._create_collapsible_section(
+            form, "ON-SITE PRODUCTION", initially_open=False)
 
-        prod_enable_frame = tk.Frame(form, bg=COLORS["white"])
+        prod_enable_frame = tk.Frame(sec_prod, bg=COLORS["white"])
         prod_enable_frame.pack(fill=tk.X, pady=2, padx=10)
         tk.Label(prod_enable_frame, text="Has Production:", width=22,
                  anchor=tk.W, font=("Segoe UI", 9),
@@ -2293,18 +2299,29 @@ class EnergyParserGUI:
         self._cf["has_production"] = tk.BooleanVar(value=False)
         tk.Checkbutton(prod_enable_frame,
                        variable=self._cf["has_production"],
+                       text="Enable on-site production",
+                       font=("Segoe UI", 8),
                        bg=COLORS["white"], selectcolor=COLORS["white"]
                        ).pack(side=tk.LEFT)
 
         self._cf["technology"] = self._add_form_field(
-            form, "Technology:", "PV")
+            sec_prod, "Technology:", "PV",
+            tooltip="PV, CHP, Wind, etc.")
         self._cf["installed_capacity"] = self._add_form_field(
-            form, "Installed Capacity (kWp):", "0")
+            sec_prod, "Installed Capacity (kWp):", "0")
         self._cf["injection_tariff"] = self._add_form_field(
-            form, "Injection Tariff (\u20ac/kWh):", "0",
+            sec_prod, "Injection Tariff (\u20ac/kWh):", "0",
             tooltip="Revenue per kWh injected into the grid")
 
-        mm_frame = tk.Frame(form, bg=COLORS["white"])
+        inj_idx_frame = tk.Frame(sec_prod, bg=COLORS["white"])
+        inj_idx_frame.pack(fill=tk.X, pady=1, padx=10)
+        self._cf["injection_indexed"] = tk.BooleanVar(value=False)
+        tk.Checkbutton(inj_idx_frame, text="Injection tariff indexed to market",
+                       variable=self._cf["injection_indexed"],
+                       font=("Segoe UI", 8), bg=COLORS["white"],
+                       selectcolor=COLORS["white"]).pack(anchor=tk.W)
+
+        mm_frame = tk.Frame(sec_prod, bg=COLORS["white"])
         mm_frame.pack(fill=tk.X, pady=2, padx=10)
         tk.Label(mm_frame, text="Metering Mode:", width=22, anchor=tk.W,
                  font=("Segoe UI", 9), bg=COLORS["white"]).pack(
@@ -2314,16 +2331,23 @@ class EnergyParserGUI:
                      values=["gross", "net", "semi_net"],
                      width=12, state="readonly",
                      font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Label(mm_frame, text="gross=separate meters, net=1:1 offset",
+                 font=("Segoe UI", 7, "italic"),
+                 bg=COLORS["white"], fg="#888").pack(side=tk.LEFT, padx=5)
 
-        # Avoidance checkboxes
+        # Self-consumption avoidance checkboxes
+        tk.Label(sec_prod, text="Self-consumed kWh avoid:",
+                 font=("Segoe UI", 8, "bold"),
+                 bg=COLORS["white"], fg=COLORS["primary"]).pack(
+                     anchor=tk.W, padx=10, pady=(5, 0))
         for key, label in [
-            ("avoids_energy", "Self-consumption avoids energy charge"),
-            ("avoids_grid_fee", "Self-consumption avoids grid energy fee"),
-            ("avoids_excise", "Self-consumption avoids excise"),
-            ("gc_eligible", "Green certificate eligible"),
+            ("avoids_energy", "Energy charge (supplier)"),
+            ("avoids_grid_fee", "Grid energy fee (DSO)"),
+            ("avoids_excise", "Excise / accijnzen"),
+            ("avoids_renewable", "Renewable levy"),
         ]:
-            cf = tk.Frame(form, bg=COLORS["white"])
-            cf.pack(fill=tk.X, pady=1, padx=10)
+            cf = tk.Frame(sec_prod, bg=COLORS["white"])
+            cf.pack(fill=tk.X, pady=1, padx=20)
             self._cf[key] = tk.BooleanVar(
                 value=(key == "avoids_energy"))
             tk.Checkbutton(cf, text=label, variable=self._cf[key],
@@ -2331,15 +2355,34 @@ class EnergyParserGUI:
                            selectcolor=COLORS["white"]).pack(
                                anchor=tk.W)
 
+        self._cf["grid_fee_reduction"] = self._add_form_field(
+            sec_prod, "Grid Fee Reduction (%):", "0",
+            tooltip="% reduction on grid fees for self-consumed kWh")
+
+        gc_frame = tk.Frame(sec_prod, bg=COLORS["white"])
+        gc_frame.pack(fill=tk.X, pady=1, padx=10)
+        self._cf["gc_eligible"] = tk.BooleanVar(value=False)
+        tk.Checkbutton(gc_frame, text="Green certificate eligible",
+                       variable=self._cf["gc_eligible"],
+                       font=("Segoe UI", 8), bg=COLORS["white"],
+                       selectcolor=COLORS["white"]).pack(anchor=tk.W)
+
         self._cf["gc_value"] = self._add_form_field(
-            form, "Green Cert. Value (\u20ac/MWh):", "0")
+            sec_prod, "Green Cert. Value (\u20ac/MWh):", "0",
+            tooltip="Value per green certificate")
+        self._cf["prosumer_tariff"] = self._add_form_field(
+            sec_prod, "Prosumer Tariff (\u20ac/year):", "0",
+            tooltip="Annual prosumer fee (Flanders)")
 
         # --- Penalties ---
-        self._add_form_section(form, "PENALTIES")
+        sec_penalties = self._create_collapsible_section(
+            form, "PENALTIES", initially_open=False)
         self._cf["min_offtake"] = self._add_form_field(
-            form, "Min. Offtake (kWh/year):", "0")
+            sec_penalties, "Min. Offtake (kWh/year):", "0",
+            tooltip="Minimum annual consumption")
         self._cf["min_offtake_penalty"] = self._add_form_field(
-            form, "Min. Offtake Penalty (\u20ac/kWh):", "0")
+            sec_penalties, "Min. Offtake Penalty (\u20ac/kWh):", "0",
+            tooltip="Penalty per kWh below minimum")
 
         # Apply button
         apply_btn = ModernButton(
@@ -2348,8 +2391,106 @@ class EnergyParserGUI:
             bg=COLORS["secondary"], width=200, height=35)
         apply_btn.pack(pady=10)
 
+    def _create_collapsible_section(self, parent, title, initially_open=True):
+        """Create a collapsible section. Returns the content frame."""
+        container = tk.Frame(parent, bg=COLORS["white"])
+        container.pack(fill=tk.X, pady=(6, 0))
+
+        header = tk.Frame(container, bg=COLORS["primary"], cursor="hand2")
+        header.pack(fill=tk.X, padx=5)
+
+        arrow = "\u25BC" if initially_open else "\u25B6"
+        toggle_label = tk.Label(
+            header, text=f" {arrow}  {title}",
+            font=("Segoe UI", 9, "bold"),
+            bg=COLORS["primary"], fg=COLORS["white"],
+            padx=6, pady=3, cursor="hand2")
+        toggle_label.pack(side=tk.LEFT)
+
+        content = tk.Frame(container, bg=COLORS["white"])
+        if initially_open:
+            content.pack(fill=tk.X, padx=5)
+
+        is_open = [initially_open]
+
+        def toggle(event=None):
+            if is_open[0]:
+                content.pack_forget()
+                toggle_label.config(text=f" \u25B6  {title}")
+                is_open[0] = False
+            else:
+                content.pack(fill=tk.X, padx=5)
+                toggle_label.config(text=f" \u25BC  {title}")
+                is_open[0] = True
+
+        header.bind("<Button-1>", toggle)
+        toggle_label.bind("<Button-1>", toggle)
+
+        return content
+
+    def _add_period_row(self, parent, index):
+        """Add a single time-of-use period row to the form."""
+        pf = tk.Frame(parent, bg=COLORS["bg"], relief=tk.FLAT, bd=1)
+        pf.pack(fill=tk.X, padx=10, pady=3)
+
+        pv = {}
+        row1 = tk.Frame(pf, bg=COLORS["bg"])
+        row1.pack(fill=tk.X, padx=5, pady=2)
+        tk.Label(row1, text=f"Period {index + 1}:",
+                 font=("Segoe UI", 8, "bold"),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT)
+        tk.Label(row1, text="Name:", font=("Segoe UI", 8),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(10, 2))
+        pv["name"] = tk.StringVar()
+        ttk.Entry(row1, textvariable=pv["name"], width=16,
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+        tk.Label(row1, text="Price(\u20ac/kWh):", font=("Segoe UI", 8),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+        pv["price"] = tk.StringVar()
+        ttk.Entry(row1, textvariable=pv["price"], width=8,
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+        tk.Label(row1, text="Grid(\u20ac/kWh):", font=("Segoe UI", 8),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+        pv["grid_price"] = tk.StringVar()
+        ttk.Entry(row1, textvariable=pv["grid_price"], width=8,
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+
+        # Remove button
+        def remove_period(frame=pf, period_vars=pv):
+            frame.destroy()
+            if period_vars in self._cf["periods"]:
+                self._cf["periods"].remove(period_vars)
+        ModernButton(row1, "\u2716", command=remove_period,
+                     bg="#DDDDDD", fg=COLORS["secondary"],
+                     width=24, height=20).pack(side=tk.RIGHT, padx=2)
+
+        row2 = tk.Frame(pf, bg=COLORS["bg"])
+        row2.pack(fill=tk.X, padx=5, pady=2)
+        tk.Label(row2, text="Hours:", font=("Segoe UI", 8),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT)
+        pv["start_h"] = tk.StringVar(value="0")
+        ttk.Entry(row2, textvariable=pv["start_h"], width=4,
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+        tk.Label(row2, text="-", font=("Segoe UI", 8),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT)
+        pv["end_h"] = tk.StringVar(value="23")
+        ttk.Entry(row2, textvariable=pv["end_h"], width=4,
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+        tk.Label(row2, text="Days(0=Mon,6=Sun):", font=("Segoe UI", 8),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+        pv["days"] = tk.StringVar(value="0,1,2,3,4,5,6")
+        ttk.Entry(row2, textvariable=pv["days"], width=16,
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+        tk.Label(row2, text="Months(1-12):", font=("Segoe UI", 8),
+                 bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+        pv["months"] = tk.StringVar(value="1,2,3,4,5,6,7,8,9,10,11,12")
+        ttk.Entry(row2, textvariable=pv["months"], width=24,
+                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+
+        self._cf["periods"].append(pv)
+
     def _add_form_section(self, parent, title):
-        """Add a section header to the form."""
+        """Add a non-collapsible section header to the form."""
         bar = tk.Frame(parent, bg=COLORS["primary"])
         bar.pack(fill=tk.X, pady=(8, 3), padx=5)
         tk.Label(bar, text=title, font=("Segoe UI", 9, "bold"),
@@ -2375,20 +2516,37 @@ class EnergyParserGUI:
     def _switch_contract_method(self):
         """Show/hide panels based on selected contract input method."""
         method = self.contract_method_var.get()
-        # Hide all
+
+        # If switching TO manual, offer to pre-fill from currently selected DB contract
+        if method == "manual" and self.db_contract_var.get():
+            country = self.db_country_var.get()
+            region = self.db_region_var.get()
+            name = self.db_contract_var.get()
+            contract = (self._contracts_db.get(country, {})
+                        .get(region, {}).get(name))
+            if contract:
+                prefill = messagebox.askyesno(
+                    "Pre-fill Manual Form?",
+                    f"Pre-fill the manual form with values from:\n"
+                    f"'{name}'?\n\n"
+                    "Click Yes to pre-fill, No for blank form.")
+                if prefill:
+                    self._populate_manual_form(contract)
+
+        # Hide all panels
         self.contract_db_frame.pack_forget()
         self.contract_import_frame.pack_forget()
         self.contract_manual_frame.pack_forget()
 
         if method == "database":
             self.contract_db_frame.pack(fill=tk.X, padx=10, pady=5,
-                                         after=self.contract_db_frame.master.winfo_children()[1])
+                                         after=self._cost_method_frame)
         elif method == "import":
             self.contract_import_frame.pack(fill=tk.X, padx=10, pady=5,
-                                             after=self.contract_db_frame.master.winfo_children()[1])
+                                             after=self._cost_method_frame)
         elif method == "manual":
             self.contract_manual_frame.pack(fill=tk.X, padx=10, pady=5,
-                                             after=self.contract_db_frame.master.winfo_children()[1])
+                                             after=self._cost_method_frame)
 
     # --- Contract Database Methods ---
 
@@ -2665,6 +2823,10 @@ class EnergyParserGUI:
         cf["time_diff"].set(contract.grid.time_differentiated)
         cf["overshoot_penalty"].set(
             str(contract.grid.overshoot_penalty_eur_per_kw))
+        cf["overshoot_ref"].set(contract.grid.overshoot_reference)
+        cf["reactive_penalty"].set(
+            str(contract.grid.reactive_power_penalty_eur_per_kvarh))
+        cf["cos_phi"].set(str(contract.grid.cos_phi_threshold))
 
         # Taxes
         cf["excise"].set(str(contract.taxes.excise_eur_per_kwh))
@@ -2682,15 +2844,23 @@ class EnergyParserGUI:
             str(contract.production.installed_capacity_kwp))
         cf["injection_tariff"].set(
             str(contract.production.injection_tariff_eur_per_kwh))
+        cf["injection_indexed"].set(
+            contract.production.injection_tariff_indexed)
         cf["metering_mode"].set(contract.production.metering_mode.value)
         cf["avoids_energy"].set(contract.production.avoids_energy_charge)
         cf["avoids_grid_fee"].set(
             contract.production.avoids_grid_energy_fee)
         cf["avoids_excise"].set(contract.production.avoids_excise)
+        cf["avoids_renewable"].set(
+            contract.production.avoids_renewable_levy)
+        cf["grid_fee_reduction"].set(
+            str(contract.production.grid_fee_reduction_pct * 100))
         cf["gc_eligible"].set(
             contract.production.green_certificate_eligible)
         cf["gc_value"].set(
             str(contract.production.green_certificate_value_eur_per_mwh))
+        cf["prosumer_tariff"].set(
+            str(contract.production.prosumer_tariff_eur_per_year))
 
         # Penalties
         cf["min_offtake"].set(
@@ -2754,6 +2924,11 @@ class EnergyParserGUI:
                     time_differentiated=cf["time_diff"].get(),
                     overshoot_penalty_eur_per_kw=float(
                         cf["overshoot_penalty"].get() or 0),
+                    overshoot_reference=cf["overshoot_ref"].get(),
+                    reactive_power_penalty_eur_per_kvarh=float(
+                        cf["reactive_penalty"].get() or 0),
+                    cos_phi_threshold=float(
+                        cf["cos_phi"].get() or 0.9),
                 ),
                 taxes=TaxesAndLevies(
                     excise_eur_per_kwh=float(
@@ -2774,12 +2949,18 @@ class EnergyParserGUI:
                         cf["metering_mode"].get()),
                     injection_tariff_eur_per_kwh=float(
                         cf["injection_tariff"].get() or 0),
+                    injection_tariff_indexed=cf["injection_indexed"].get(),
                     avoids_energy_charge=cf["avoids_energy"].get(),
                     avoids_grid_energy_fee=cf["avoids_grid_fee"].get(),
                     avoids_excise=cf["avoids_excise"].get(),
+                    avoids_renewable_levy=cf["avoids_renewable"].get(),
+                    grid_fee_reduction_pct=float(
+                        cf["grid_fee_reduction"].get() or 0) / 100.0,
                     green_certificate_eligible=cf["gc_eligible"].get(),
                     green_certificate_value_eur_per_mwh=float(
                         cf["gc_value"].get() or 0),
+                    prosumer_tariff_eur_per_year=float(
+                        cf["prosumer_tariff"].get() or 0),
                 ),
                 penalties=Penalties(
                     minimum_offtake_kwh_year=float(
