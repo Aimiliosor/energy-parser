@@ -1670,8 +1670,20 @@ class EnergyParserGUI:
             site_name_override=site_name_var.get().strip(),
         )
 
+    @staticmethod
+    def _get_desktop_path():
+        """Return the user's Desktop path."""
+        if os.name == "nt":
+            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            if os.path.isdir(desktop):
+                return desktop
+        return os.path.expanduser("~")
+
     def _generate_report(self, selected_sections, report_title, site_name_override):
         """Generate PDF report with only the selected sections."""
+        import time as _time
+        import tempfile
+
         # Default filename
         site_name = site_name_override or self.site_name_var.get().strip()
         if site_name:
@@ -1682,8 +1694,8 @@ class EnergyParserGUI:
         else:
             default_name = "energy_report.pdf"
 
-        default_dir = (os.path.dirname(self.file_path)
-                       if self.file_path else os.getcwd())
+        # Default to Desktop to avoid OneDrive lock issues
+        default_dir = self._get_desktop_path()
 
         save_path = filedialog.asksaveasfilename(
             initialdir=default_dir,
@@ -1800,25 +1812,78 @@ class EnergyParserGUI:
                 except Exception:
                     pass
 
-            result_path = generate_pdf_report(
-                output_path=save_path,
+            # Build common kwargs for generate_pdf_report
+            pdf_kwargs = dict(
                 sections=selected_sections,
                 report_title=report_title,
                 stats_result=self.stats_result,
-                kpi_data=self.kpi_data if "data_quality" in selected_sections else None,
+                kpi_data=(self.kpi_data
+                          if "data_quality" in selected_sections else None),
                 logo_path=logo_path,
                 quality_report=(self.quality_report
-                                if "data_quality" in selected_sections else None),
+                                if "data_quality" in selected_sections
+                                else None),
                 site_info=site_info,
                 battery_data=battery_report_data,
                 cost_simulation_data=cost_sim_report_data,
                 data_overview=data_overview,
             )
 
+            # Try to remove existing file first (avoids OneDrive lock)
+            if os.path.exists(save_path):
+                try:
+                    os.remove(save_path)
+                except (PermissionError, OSError):
+                    pass  # Will be caught below if write also fails
+
+            # Attempt to save, with retry + fallback for OneDrive locks
+            result_path = None
+            used_fallback = False
+            try:
+                result_path = generate_pdf_report(
+                    output_path=save_path, **pdf_kwargs)
+            except (PermissionError, OSError):
+                # Retry once after a short delay
+                _time.sleep(1)
+                try:
+                    if os.path.exists(save_path):
+                        os.remove(save_path)
+                except (PermissionError, OSError):
+                    pass
+                try:
+                    result_path = generate_pdf_report(
+                        output_path=save_path, **pdf_kwargs)
+                except (PermissionError, OSError):
+                    # Fallback: save to Desktop, or temp if that also fails
+                    fallback_dir = self._get_desktop_path()
+                    fallback_path = os.path.join(
+                        fallback_dir, os.path.basename(save_path))
+                    try:
+                        result_path = generate_pdf_report(
+                            output_path=fallback_path, **pdf_kwargs)
+                    except (PermissionError, OSError):
+                        # Last resort: temp directory
+                        fallback_path = os.path.join(
+                            tempfile.gettempdir(),
+                            os.path.basename(save_path))
+                        result_path = generate_pdf_report(
+                            output_path=fallback_path, **pdf_kwargs)
+                    used_fallback = True
+
             self.update_progress(100, "PDF report generated!")
 
+            if used_fallback:
+                messagebox.showwarning(
+                    "Saved to Alternative Location",
+                    f"Could not save to the selected location "
+                    f"(file may be locked by OneDrive).\n\n"
+                    f"Report saved to:\n{result_path}\n\n"
+                    f"Tip: close the file if it's open in another "
+                    f"program, or choose a folder not synced by OneDrive.")
+
             if messagebox.askyesno("Report Generated",
-                                    f"PDF saved to:\n{result_path}\n\nOpen the file?"):
+                                    f"PDF saved to:\n{result_path}\n\n"
+                                    f"Open the file?"):
                 os.startfile(result_path)
 
         except Exception as e:
