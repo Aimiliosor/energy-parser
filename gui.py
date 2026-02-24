@@ -59,6 +59,12 @@ from energy_parser.contract_model import (
 )
 from energy_parser.cost_simulator import CostSimulator, CostBreakdown
 from energy_parser.exporter import save_cost_simulation_xlsx
+from spartacus_project import (
+    save_project, load_project,
+    serialize_quality_report, deserialize_quality_report,
+    serialize_cost_simulation, deserialize_cost_simulation,
+    load_recent_projects, add_to_recent_projects,
+)
 
 
 def resource_path(relative_path):
@@ -227,6 +233,12 @@ class EnergyParserGUI:
         self._ep_flat_price_var = None      # StringVar for flat price
         self._ep_warning_label = None       # Validation warning label
 
+        # Project state
+        self._project_path = None
+        self._project_dirty = False
+        self._project_name = "Untitled"
+        self._restoring = False
+
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
         self.cons_col_var = tk.StringVar(value="1")
@@ -250,6 +262,13 @@ class EnergyParserGUI:
         # Setup UI
         self.setup_styles()
         self.create_widgets()
+
+        # Close handler
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Dirty tracking on StringVars
+        self.site_name_var.trace_add("write", lambda *_: self._mark_dirty())
+        self.grid_capacity_var.trace_add("write", lambda *_: self._mark_dirty())
 
         # Bind resize event for responsive images
         self.root.bind("<Configure>", self.on_resize)
@@ -422,6 +441,9 @@ class EnergyParserGUI:
 
     def create_widgets(self):
         """Create all GUI widgets."""
+        # Menu bar
+        self._create_menu_bar()
+
         # Header (packed at top, opaque branded bar)
         self.create_header(self.root)
 
@@ -1172,288 +1194,290 @@ class EnergyParserGUI:
                 self.transformed_df, self.hours_per_interval, selected)
 
             self.update_progress(60, "Formatting results...")
-
-            # Display summary in stats_text
-            self.stats_text.config(state=tk.NORMAL)
-            self.stats_text.delete(1.0, tk.END)
-
-            yearly = self.stats_result.get("yearly", {})
-            for col_name, col_stats in yearly.items():
-                self.stats_text.insert(tk.END, f"\n{col_name}\n", "header")
-                self.stats_text.insert(tk.END, "-" * 40 + "\n")
-
-                if "total_kwh" in selected:
-                    self.stats_text.insert(tk.END, "  Total Energy: ", "metric")
-                    self.stats_text.insert(tk.END, f"{col_stats['total_kwh']:,.2f} kWh\n")
-                if "mean_kw" in selected:
-                    self.stats_text.insert(tk.END, "  Mean Power: ", "metric")
-                    self.stats_text.insert(tk.END, f"{col_stats['mean_kw']:.2f} kW\n")
-                if "median_kw" in selected:
-                    self.stats_text.insert(tk.END, "  Median Power: ", "metric")
-                    self.stats_text.insert(tk.END, f"{col_stats['median_kw']:.2f} kW\n")
-                if "std_kw" in selected:
-                    self.stats_text.insert(tk.END, "  Std Deviation: ", "metric")
-                    self.stats_text.insert(tk.END, f"{col_stats['std_kw']:.2f} kW\n")
-                if "min_max_kw" in selected:
-                    self.stats_text.insert(tk.END, "  Min / Max: ", "metric")
-                    self.stats_text.insert(tk.END,
-                        f"{col_stats['min_kw']:.2f} / {col_stats['max_kw']:.2f} kW\n")
-                if "peak_times" in selected:
-                    self.stats_text.insert(tk.END, "  Peak Time: ", "metric")
-                    self.stats_text.insert(tk.END, f"{col_stats['peak_timestamp']}\n")
-                    self.stats_text.insert(tk.END, "  Off-Peak Time: ", "metric")
-                    self.stats_text.insert(tk.END, f"{col_stats['off_peak_timestamp']}\n")
-                if "daily_avg_kwh" in selected:
-                    self.stats_text.insert(tk.END, "  Daily Average: ", "metric")
-                    self.stats_text.insert(tk.END, f"{col_stats['daily_avg_kwh']:,.2f} kWh\n")
-                if "monthly_totals" in selected:
-                    self.stats_text.insert(tk.END, "\n  Monthly Totals (kWh):\n", "metric")
-                    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                    monthly = col_stats.get("monthly_totals", {})
-                    for m in range(1, 13):
-                        val = monthly.get(m, 0)
-                        self.stats_text.insert(tk.END,
-                            f"    {month_names[m-1]}: {val:>10,.2f}\n")
-
-            # Peak analysis text display
-            if "peak_analysis" in selected:
-                peaks = self.stats_result.get("peaks", {})
-                for col_name, peak_data in peaks.items():
-                    self.stats_text.insert(tk.END,
-                        f"\nPeak Consumption Analysis — {col_name}\n", "header")
-                    self.stats_text.insert(tk.END, "=" * 50 + "\n")
-
-                    top_peaks = peak_data.get("top_peaks", [])
-                    if not top_peaks:
-                        self.stats_text.insert(tk.END,
-                            "  No significant peaks detected.\n")
-                        continue
-
-                    self.stats_text.insert(tk.END, "\n  Top Peaks:\n", "metric")
-                    # Parse grid capacity for % display
-                    try:
-                        _grid_cap = float(self.grid_capacity_var.get().strip())
-                    except (ValueError, TypeError):
-                        _grid_cap = None
-                    for p in top_peaks:
-                        grid_pct_str = ""
-                        if _grid_cap and _grid_cap > 0:
-                            grid_pct = p['value'] / _grid_cap * 100
-                            grid_pct_str = f"  ({grid_pct:.1f}% of grid)"
-                        self.stats_text.insert(tk.END,
-                            f"    #{p['rank']}  {p['value']:>8,.1f} kW{grid_pct_str}  "
-                            f"{p['timestamp']}  {p['day_of_week']:<9s}  "
-                            f"Duration: {p['duration_hours']:.1f}h\n")
-
-                    chars = peak_data.get("characteristics", {})
-                    thresholds = peak_data.get("thresholds", {})
-                    patterns = peak_data.get("patterns", {})
-                    clustering = chars.get("clustering", {})
-
-                    self.stats_text.insert(tk.END,
-                        "\n  Characteristics:\n", "metric")
-                    self.stats_text.insert(tk.END,
-                        f"    Peaks detected:      {patterns.get('total_peaks_detected', 0)}\n"
-                        f"    Avg duration:         {chars.get('avg_duration_hours', 0):.1f} hours\n"
-                        f"    Avg rise rate:        {chars.get('avg_rise_rate', 0):,.1f} kW/hour\n"
-                        f"    Avg fall rate:        {chars.get('avg_fall_rate', 0):,.1f} kW/hour\n"
-                        f"    Clustered peaks:      {clustering.get('clustered_count', 0)}\n"
-                        f"    Isolated peaks:       {clustering.get('isolated_count', 0)}\n")
-
-                    self.stats_text.insert(tk.END,
-                        "\n  Threshold Analysis:\n", "metric")
-                    self.stats_text.insert(tk.END,
-                        f"    90th percentile:      {thresholds.get('p90_value', 0):,.2f} kW\n"
-                        f"    95th percentile:      {thresholds.get('p95_value', 0):,.2f} kW\n"
-                        f"    Time above 90th pct:  {thresholds.get('time_above_p90_hours', 0):,.1f} hours\n"
-                        f"    Time above 95th pct:  {thresholds.get('time_above_p95_hours', 0):,.1f} hours\n"
-                        f"    Peak-to-avg ratio:    {thresholds.get('peak_to_avg_ratio', 0):.2f}x\n")
-
-                    freq = patterns.get("peak_frequency", {})
-                    self.stats_text.insert(tk.END,
-                        "\n  Peak Frequency:\n", "metric")
-                    self.stats_text.insert(tk.END,
-                        f"    Readings above 90th:  {freq.get('above_90th', 0)}\n"
-                        f"    Readings above 95th:  {freq.get('above_95th', 0)}\n"
-                        f"    Readings above 99th:  {freq.get('above_99th', 0)}\n")
-
-            # Histogram text display
-            if "frequency_histogram" in selected:
-                histogram = self.stats_result.get("histogram", {})
-                for col_name, hist_data in histogram.items():
-                    if not hist_data.get("counts"):
-                        continue
-                    self.stats_text.insert(tk.END,
-                        f"\nFrequency Histogram — {col_name}\n", "header")
-                    self.stats_text.insert(tk.END, "-" * 40 + "\n")
-                    self.stats_text.insert(tk.END,
-                        f"  Bins: {hist_data['n_bins']}  |  "
-                        f"Bin width: {hist_data['bin_width']:,.2f} kW\n")
-                    self.stats_text.insert(tk.END,
-                        f"  Mean: {hist_data['mean']:,.2f} kW  |  "
-                        f"Median: {hist_data['median']:,.2f} kW  |  "
-                        f"Std: {hist_data['std']:,.2f} kW\n")
-
-            # CDF text display
-            if "cumulative_distribution" in selected:
-                cdf_data = self.stats_result.get("cdf", {})
-                for col_name, col_cdf in cdf_data.items():
-                    pcts = col_cdf.get("percentiles", {})
-                    if not pcts:
-                        continue
-                    self.stats_text.insert(tk.END,
-                        f"\nCumulative Distribution — {col_name}\n", "header")
-                    self.stats_text.insert(tk.END, "-" * 40 + "\n")
-                    self.stats_text.insert(tk.END,
-                        f"  Data points: {col_cdf.get('count', 0):,}\n")
-                    self.stats_text.insert(tk.END,
-                        f"  50th percentile (median): {pcts.get('p50', 0):,.2f} kW\n"
-                        f"  90th percentile:          {pcts.get('p90', 0):,.2f} kW\n"
-                        f"  95th percentile:          {pcts.get('p95', 0):,.2f} kW\n")
-
-            # Peak hour frequency text display
-            if "peak_hour_frequency" in selected:
-                peak_hours = self.stats_result.get("peak_hours", {})
-                for col_name, ph_data in peak_hours.items():
-                    if ph_data.get("total_peaks", 0) == 0:
-                        continue
-                    self.stats_text.insert(tk.END,
-                        f"\nPeak Event Frequency — {col_name}\n", "header")
-                    self.stats_text.insert(tk.END, "=" * 50 + "\n")
-                    self.stats_text.insert(tk.END,
-                        f"  Threshold (P{int(ph_data['percentile_used'])}): "
-                        f"{ph_data['threshold_value']:,.2f} kW\n")
-                    self.stats_text.insert(tk.END,
-                        f"  Total peak events: {ph_data['total_peaks']:,}\n")
-
-                    peak_h = ph_data["peak_hour"]
-                    self.stats_text.insert(tk.END,
-                        f"  Peak events most common at: "
-                        f"{peak_h:02d}:00 ({ph_data['peak_hour_count']} occurrences)\n")
-
-                    pf = ph_data.get("peak_free_hours", [])
-                    if pf:
-                        if len(pf) <= 10:
-                            pf_str = ", ".join(f"{h:02d}:00" for h in pf)
-                        else:
-                            pf_str = f"{len(pf)} hours"
-                        self.stats_text.insert(tk.END,
-                            f"  Peak-free hours: {pf_str}\n")
-
-                    conc = ph_data.get("concentration", {})
-                    if conc.get("pct", 0) > 0:
-                        self.stats_text.insert(tk.END,
-                            f"  Peak concentration: {conc['pct']:.0f}% of peaks "
-                            f"between {conc['start_hour']:02d}:00 - "
-                            f"{conc['end_hour']:02d}:59\n")
-
-            self.stats_text.config(state=tk.DISABLED)
+            self._display_stats_text()
 
             self.update_progress(80, "Rendering charts...")
-
-            # Render seasonal charts if selected
-            self._chart_images.clear()
-            for w in self.chart_frame.winfo_children():
-                w.destroy()
-
-            if "seasonal_profile" in selected:
-                seasonal = self.stats_result.get("seasonal", {})
-                for col_name, seasons_dict in seasonal.items():
-                    for season_name in ["Winter", "Spring", "Summer", "Autumn"]:
-                        profile_df = seasons_dict.get(season_name)
-                        if profile_df is None:
-                            continue
-
-                        chart_bytes = generate_seasonal_chart(
-                            profile_df, col_name, season_name)
-
-                        # Convert to tkinter-displayable image
-                        img = Image.open(io.BytesIO(chart_bytes))
-                        # Scale down for display
-                        display_width = 750
-                        ratio = display_width / img.width
-                        display_height = int(img.height * ratio)
-                        img = img.resize((display_width, display_height),
-                                          Image.Resampling.LANCZOS)
-                        photo = ImageTk.PhotoImage(img)
-                        self._chart_images.append(photo)
-
-                        label = tk.Label(self.chart_frame, image=photo,
-                                          bg=COLORS["white"])
-                        label.pack(pady=3)
-
-            # Render peak charts if selected
-            if "peak_analysis" in selected:
-                peaks = self.stats_result.get("peaks", {})
-                for col_name, peak_data in peaks.items():
-                    if not peak_data.get("top_peaks"):
-                        continue
-
-                    chart_generators = [
-                        lambda: generate_peak_value_trend_chart(
-                            peak_data["top_peaks"], col_name),
-                        lambda: generate_peak_timeline_chart(
-                            peak_data.get("peak_timeline", []), col_name),
-                        lambda: generate_peak_duration_chart(
-                            peak_data["top_peaks"], col_name),
-                        lambda: generate_peak_heatmap(
-                            peak_data.get("patterns", {}).get(
-                                "hourly_distribution", {}),
-                            peak_data.get("patterns", {}).get(
-                                "daily_distribution", {}),
-                            col_name),
-                    ]
-
-                    for gen in chart_generators:
-                        chart_bytes = gen()
-                        img = Image.open(io.BytesIO(chart_bytes))
-                        display_width = 750
-                        ratio = display_width / img.width
-                        display_height = int(img.height * ratio)
-                        img = img.resize((display_width, display_height),
-                                          Image.Resampling.LANCZOS)
-                        photo = ImageTk.PhotoImage(img)
-                        self._chart_images.append(photo)
-
-                        label = tk.Label(self.chart_frame, image=photo,
-                                          bg=COLORS["white"])
-                        label.pack(pady=3)
-
-            # Render histogram charts
-            if "frequency_histogram" in selected:
-                histogram = self.stats_result.get("histogram", {})
-                for col_name, hist_data in histogram.items():
-                    if not hist_data.get("counts"):
-                        continue
-                    chart_bytes = generate_histogram_chart(hist_data, col_name)
-                    self._display_chart(chart_bytes)
-
-            # Render CDF charts
-            if "cumulative_distribution" in selected:
-                cdf_all = self.stats_result.get("cdf", {})
-                for col_name, col_cdf in cdf_all.items():
-                    if not col_cdf.get("values"):
-                        continue
-                    chart_bytes = generate_cdf_chart(
-                        col_cdf, col_name, cdf_all)
-                    self._display_chart(chart_bytes)
-                    break  # Only one combined CDF chart needed
-
-            # Render peak hour frequency charts
-            if "peak_hour_frequency" in selected:
-                peak_hours = self.stats_result.get("peak_hours", {})
-                for col_name, ph_data in peak_hours.items():
-                    if ph_data.get("total_peaks", 0) == 0:
-                        continue
-                    chart_bytes = generate_peak_hour_frequency_chart(ph_data, col_name)
-                    self._display_chart(chart_bytes)
+            self._display_stats_charts()
 
             self.update_progress(100, "Analysis complete!")
+            self._mark_dirty()
 
         except Exception as e:
             self.update_progress(0, "Error during analysis")
             messagebox.showerror("Error", f"Statistical analysis failed:\n{str(e)}")
+
+    def _display_stats_text(self):
+        """Populate the stats_text widget from self.stats_result and self.stat_vars."""
+        selected = [k for k, v in self.stat_vars.items() if v.get()]
+
+        self.stats_text.config(state=tk.NORMAL)
+        self.stats_text.delete(1.0, tk.END)
+
+        yearly = self.stats_result.get("yearly", {})
+        for col_name, col_stats in yearly.items():
+            self.stats_text.insert(tk.END, f"\n{col_name}\n", "header")
+            self.stats_text.insert(tk.END, "-" * 40 + "\n")
+
+            if "total_kwh" in selected:
+                self.stats_text.insert(tk.END, "  Total Energy: ", "metric")
+                self.stats_text.insert(tk.END, f"{col_stats['total_kwh']:,.2f} kWh\n")
+            if "mean_kw" in selected:
+                self.stats_text.insert(tk.END, "  Mean Power: ", "metric")
+                self.stats_text.insert(tk.END, f"{col_stats['mean_kw']:.2f} kW\n")
+            if "median_kw" in selected:
+                self.stats_text.insert(tk.END, "  Median Power: ", "metric")
+                self.stats_text.insert(tk.END, f"{col_stats['median_kw']:.2f} kW\n")
+            if "std_kw" in selected:
+                self.stats_text.insert(tk.END, "  Std Deviation: ", "metric")
+                self.stats_text.insert(tk.END, f"{col_stats['std_kw']:.2f} kW\n")
+            if "min_max_kw" in selected:
+                self.stats_text.insert(tk.END, "  Min / Max: ", "metric")
+                self.stats_text.insert(tk.END,
+                    f"{col_stats['min_kw']:.2f} / {col_stats['max_kw']:.2f} kW\n")
+            if "peak_times" in selected:
+                self.stats_text.insert(tk.END, "  Peak Time: ", "metric")
+                self.stats_text.insert(tk.END, f"{col_stats['peak_timestamp']}\n")
+                self.stats_text.insert(tk.END, "  Off-Peak Time: ", "metric")
+                self.stats_text.insert(tk.END, f"{col_stats['off_peak_timestamp']}\n")
+            if "daily_avg_kwh" in selected:
+                self.stats_text.insert(tk.END, "  Daily Average: ", "metric")
+                self.stats_text.insert(tk.END, f"{col_stats['daily_avg_kwh']:,.2f} kWh\n")
+            if "monthly_totals" in selected:
+                self.stats_text.insert(tk.END, "\n  Monthly Totals (kWh):\n", "metric")
+                month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                monthly = col_stats.get("monthly_totals", {})
+                for m in range(1, 13):
+                    val = monthly.get(m, 0)
+                    self.stats_text.insert(tk.END,
+                        f"    {month_names[m-1]}: {val:>10,.2f}\n")
+
+        # Peak analysis text display
+        if "peak_analysis" in selected:
+            peaks = self.stats_result.get("peaks", {})
+            for col_name, peak_data in peaks.items():
+                self.stats_text.insert(tk.END,
+                    f"\nPeak Consumption Analysis — {col_name}\n", "header")
+                self.stats_text.insert(tk.END, "=" * 50 + "\n")
+
+                top_peaks = peak_data.get("top_peaks", [])
+                if not top_peaks:
+                    self.stats_text.insert(tk.END,
+                        "  No significant peaks detected.\n")
+                    continue
+
+                self.stats_text.insert(tk.END, "\n  Top Peaks:\n", "metric")
+                try:
+                    _grid_cap = float(self.grid_capacity_var.get().strip())
+                except (ValueError, TypeError):
+                    _grid_cap = None
+                for p in top_peaks:
+                    grid_pct_str = ""
+                    if _grid_cap and _grid_cap > 0:
+                        grid_pct = p['value'] / _grid_cap * 100
+                        grid_pct_str = f"  ({grid_pct:.1f}% of grid)"
+                    self.stats_text.insert(tk.END,
+                        f"    #{p['rank']}  {p['value']:>8,.1f} kW{grid_pct_str}  "
+                        f"{p['timestamp']}  {p['day_of_week']:<9s}  "
+                        f"Duration: {p['duration_hours']:.1f}h\n")
+
+                chars = peak_data.get("characteristics", {})
+                thresholds = peak_data.get("thresholds", {})
+                patterns = peak_data.get("patterns", {})
+                clustering = chars.get("clustering", {})
+
+                self.stats_text.insert(tk.END,
+                    "\n  Characteristics:\n", "metric")
+                self.stats_text.insert(tk.END,
+                    f"    Peaks detected:      {patterns.get('total_peaks_detected', 0)}\n"
+                    f"    Avg duration:         {chars.get('avg_duration_hours', 0):.1f} hours\n"
+                    f"    Avg rise rate:        {chars.get('avg_rise_rate', 0):,.1f} kW/hour\n"
+                    f"    Avg fall rate:        {chars.get('avg_fall_rate', 0):,.1f} kW/hour\n"
+                    f"    Clustered peaks:      {clustering.get('clustered_count', 0)}\n"
+                    f"    Isolated peaks:       {clustering.get('isolated_count', 0)}\n")
+
+                self.stats_text.insert(tk.END,
+                    "\n  Threshold Analysis:\n", "metric")
+                self.stats_text.insert(tk.END,
+                    f"    90th percentile:      {thresholds.get('p90_value', 0):,.2f} kW\n"
+                    f"    95th percentile:      {thresholds.get('p95_value', 0):,.2f} kW\n"
+                    f"    Time above 90th pct:  {thresholds.get('time_above_p90_hours', 0):,.1f} hours\n"
+                    f"    Time above 95th pct:  {thresholds.get('time_above_p95_hours', 0):,.1f} hours\n"
+                    f"    Peak-to-avg ratio:    {thresholds.get('peak_to_avg_ratio', 0):.2f}x\n")
+
+                freq = patterns.get("peak_frequency", {})
+                self.stats_text.insert(tk.END,
+                    "\n  Peak Frequency:\n", "metric")
+                self.stats_text.insert(tk.END,
+                    f"    Readings above 90th:  {freq.get('above_90th', 0)}\n"
+                    f"    Readings above 95th:  {freq.get('above_95th', 0)}\n"
+                    f"    Readings above 99th:  {freq.get('above_99th', 0)}\n")
+
+        # Histogram text display
+        if "frequency_histogram" in selected:
+            histogram = self.stats_result.get("histogram", {})
+            for col_name, hist_data in histogram.items():
+                if not hist_data.get("counts"):
+                    continue
+                self.stats_text.insert(tk.END,
+                    f"\nFrequency Histogram — {col_name}\n", "header")
+                self.stats_text.insert(tk.END, "-" * 40 + "\n")
+                self.stats_text.insert(tk.END,
+                    f"  Bins: {hist_data['n_bins']}  |  "
+                    f"Bin width: {hist_data['bin_width']:,.2f} kW\n")
+                self.stats_text.insert(tk.END,
+                    f"  Mean: {hist_data['mean']:,.2f} kW  |  "
+                    f"Median: {hist_data['median']:,.2f} kW  |  "
+                    f"Std: {hist_data['std']:,.2f} kW\n")
+
+        # CDF text display
+        if "cumulative_distribution" in selected:
+            cdf_data = self.stats_result.get("cdf", {})
+            for col_name, col_cdf in cdf_data.items():
+                pcts = col_cdf.get("percentiles", {})
+                if not pcts:
+                    continue
+                self.stats_text.insert(tk.END,
+                    f"\nCumulative Distribution — {col_name}\n", "header")
+                self.stats_text.insert(tk.END, "-" * 40 + "\n")
+                self.stats_text.insert(tk.END,
+                    f"  Data points: {col_cdf.get('count', 0):,}\n")
+                self.stats_text.insert(tk.END,
+                    f"  50th percentile (median): {pcts.get('p50', 0):,.2f} kW\n"
+                    f"  90th percentile:          {pcts.get('p90', 0):,.2f} kW\n"
+                    f"  95th percentile:          {pcts.get('p95', 0):,.2f} kW\n")
+
+        # Peak hour frequency text display
+        if "peak_hour_frequency" in selected:
+            peak_hours = self.stats_result.get("peak_hours", {})
+            for col_name, ph_data in peak_hours.items():
+                if ph_data.get("total_peaks", 0) == 0:
+                    continue
+                self.stats_text.insert(tk.END,
+                    f"\nPeak Event Frequency — {col_name}\n", "header")
+                self.stats_text.insert(tk.END, "=" * 50 + "\n")
+                self.stats_text.insert(tk.END,
+                    f"  Threshold (P{int(ph_data['percentile_used'])}): "
+                    f"{ph_data['threshold_value']:,.2f} kW\n")
+                self.stats_text.insert(tk.END,
+                    f"  Total peak events: {ph_data['total_peaks']:,}\n")
+
+                peak_h = ph_data["peak_hour"]
+                self.stats_text.insert(tk.END,
+                    f"  Peak events most common at: "
+                    f"{peak_h:02d}:00 ({ph_data['peak_hour_count']} occurrences)\n")
+
+                pf = ph_data.get("peak_free_hours", [])
+                if pf:
+                    if len(pf) <= 10:
+                        pf_str = ", ".join(f"{h:02d}:00" for h in pf)
+                    else:
+                        pf_str = f"{len(pf)} hours"
+                    self.stats_text.insert(tk.END,
+                        f"  Peak-free hours: {pf_str}\n")
+
+                conc = ph_data.get("concentration", {})
+                if conc.get("pct", 0) > 0:
+                    self.stats_text.insert(tk.END,
+                        f"  Peak concentration: {conc['pct']:.0f}% of peaks "
+                        f"between {conc['start_hour']:02d}:00 - "
+                        f"{conc['end_hour']:02d}:59\n")
+
+        self.stats_text.config(state=tk.DISABLED)
+
+    def _display_stats_charts(self):
+        """Render statistical charts from self.stats_result and self.stat_vars."""
+        selected = [k for k, v in self.stat_vars.items() if v.get()]
+
+        self._chart_images.clear()
+        for w in self.chart_frame.winfo_children():
+            w.destroy()
+
+        if "seasonal_profile" in selected:
+            seasonal = self.stats_result.get("seasonal", {})
+            for col_name, seasons_dict in seasonal.items():
+                for season_name in ["Winter", "Spring", "Summer", "Autumn"]:
+                    profile_df = seasons_dict.get(season_name)
+                    if profile_df is None:
+                        continue
+
+                    chart_bytes = generate_seasonal_chart(
+                        profile_df, col_name, season_name)
+
+                    img = Image.open(io.BytesIO(chart_bytes))
+                    display_width = 750
+                    ratio = display_width / img.width
+                    display_height = int(img.height * ratio)
+                    img = img.resize((display_width, display_height),
+                                      Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._chart_images.append(photo)
+
+                    label = tk.Label(self.chart_frame, image=photo,
+                                      bg=COLORS["white"])
+                    label.pack(pady=3)
+
+        if "peak_analysis" in selected:
+            peaks = self.stats_result.get("peaks", {})
+            for col_name, peak_data in peaks.items():
+                if not peak_data.get("top_peaks"):
+                    continue
+
+                chart_generators = [
+                    lambda: generate_peak_value_trend_chart(
+                        peak_data["top_peaks"], col_name),
+                    lambda: generate_peak_timeline_chart(
+                        peak_data.get("peak_timeline", []), col_name),
+                    lambda: generate_peak_duration_chart(
+                        peak_data["top_peaks"], col_name),
+                    lambda: generate_peak_heatmap(
+                        peak_data.get("patterns", {}).get(
+                            "hourly_distribution", {}),
+                        peak_data.get("patterns", {}).get(
+                            "daily_distribution", {}),
+                        col_name),
+                ]
+
+                for gen in chart_generators:
+                    chart_bytes = gen()
+                    img = Image.open(io.BytesIO(chart_bytes))
+                    display_width = 750
+                    ratio = display_width / img.width
+                    display_height = int(img.height * ratio)
+                    img = img.resize((display_width, display_height),
+                                      Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._chart_images.append(photo)
+
+                    label = tk.Label(self.chart_frame, image=photo,
+                                      bg=COLORS["white"])
+                    label.pack(pady=3)
+
+        if "frequency_histogram" in selected:
+            histogram = self.stats_result.get("histogram", {})
+            for col_name, hist_data in histogram.items():
+                if not hist_data.get("counts"):
+                    continue
+                chart_bytes = generate_histogram_chart(hist_data, col_name)
+                self._display_chart(chart_bytes)
+
+        if "cumulative_distribution" in selected:
+            cdf_all = self.stats_result.get("cdf", {})
+            for col_name, col_cdf in cdf_all.items():
+                if not col_cdf.get("values"):
+                    continue
+                chart_bytes = generate_cdf_chart(
+                    col_cdf, col_name, cdf_all)
+                self._display_chart(chart_bytes)
+                break  # Only one combined CDF chart needed
+
+        if "peak_hour_frequency" in selected:
+            peak_hours = self.stats_result.get("peak_hours", {})
+            for col_name, ph_data in peak_hours.items():
+                if ph_data.get("total_peaks", 0) == 0:
+                    continue
+                chart_bytes = generate_peak_hour_frequency_chart(ph_data, col_name)
+                self._display_chart(chart_bytes)
 
     def generate_report(self):
         """Generate a branded PDF report."""
@@ -1761,6 +1785,7 @@ class EnergyParserGUI:
 
             self.battery_charts_btn.set_enabled(True)
             self.update_progress(100, "Battery analysis complete!")
+            self._mark_dirty()
 
         except Exception as e:
             self.update_progress(0, "Error in battery analysis")
@@ -2658,6 +2683,7 @@ class EnergyParserGUI:
             self._set_active_contract(contract)
             # Build energy price input panel
             self._build_energy_price_panel(contract)
+            self._mark_dirty()
 
     def _clone_contract_from_db(self):
         """Clone a database contract into the manual editor popup."""
@@ -2999,6 +3025,7 @@ class EnergyParserGUI:
             )
 
             self._set_active_contract(contract)
+            self._mark_dirty()
 
             # Close the popup if it's open
             if hasattr(self, '_manual_popup') and self._manual_popup:
@@ -3317,6 +3344,7 @@ class EnergyParserGUI:
             self._show_battery_link(summary)
 
             self.update_progress(100, "Cost simulation complete!")
+            self._mark_dirty()
 
         except Exception as e:
             self.update_progress(0, "Cost simulation failed")
@@ -3760,6 +3788,7 @@ class EnergyParserGUI:
 
             # Enable transform button
             self.transform_btn.set_enabled(True)
+            self._mark_dirty()
 
         except Exception as e:
             self.update_progress(0, "Error loading file")
@@ -3929,6 +3958,7 @@ class EnergyParserGUI:
             # Enable quality check
             self.quality_btn.set_enabled(True)
             self.export_btn.set_enabled(True)
+            self._mark_dirty()
 
         except Exception as e:
             self.update_progress(0, "Error during transformation")
@@ -3968,6 +3998,7 @@ class EnergyParserGUI:
                 self.display_kpi_dashboard(kpi)
 
             self.update_progress(100, "Quality check complete!")
+            self._mark_dirty()
 
             # Enable corrections if issues found
             if self.quality_report:
@@ -4206,6 +4237,7 @@ class EnergyParserGUI:
                 pass  # Non-critical: don't block corrections on KPI failure
 
             self.update_progress(100, "Corrections applied!")
+            self._mark_dirty()
 
             self.show_result("Corrections applied successfully!\n"
                            f"  - Final rows: {len(df)}\n"
@@ -4301,6 +4333,551 @@ class EnergyParserGUI:
         self.results_text.delete(1.0, tk.END)
         self.results_text.insert(tk.END, text)
         self.results_text.config(state=tk.DISABLED)
+
+    # ============ Project Save / Load ============
+
+    def _create_menu_bar(self):
+        """Create the File menu bar with save/load/recent projects."""
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        file_menu.add_command(label="New Project", accelerator="Ctrl+N",
+                              command=self._new_project)
+        file_menu.add_command(label="Open Project...", accelerator="Ctrl+O",
+                              command=self._open_project)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save", accelerator="Ctrl+S",
+                              command=self._save_project)
+        file_menu.add_command(label="Save As...", accelerator="Ctrl+Shift+S",
+                              command=self._save_project_as)
+        file_menu.add_separator()
+
+        # Recent Projects submenu
+        self.recent_menu = tk.Menu(file_menu, tearoff=0)
+        file_menu.add_cascade(label="Recent Projects", menu=self.recent_menu)
+        self._refresh_recent_menu()
+
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+
+        # Keyboard shortcuts
+        self.root.bind("<Control-n>", lambda e: self._new_project())
+        self.root.bind("<Control-o>", lambda e: self._open_project())
+        self.root.bind("<Control-s>", lambda e: self._save_project())
+        self.root.bind("<Control-Shift-S>", lambda e: self._save_project_as())
+        self.root.bind("<Control-Shift-s>", lambda e: self._save_project_as())
+
+    def _update_title(self):
+        """Update the window title to reflect project name and dirty state."""
+        name = self._project_name or "Untitled"
+        dirty = " *" if self._project_dirty else ""
+        self.root.title(f"Spartacus \u2014 {name}{dirty}")
+
+    def _mark_dirty(self):
+        """Mark the project as having unsaved changes."""
+        if self._restoring:
+            return
+        self._project_dirty = True
+        self._update_title()
+
+    def _on_close(self):
+        """Handle window close — check for unsaved changes first."""
+        if self._check_unsaved_changes():
+            self.root.destroy()
+
+    def _check_unsaved_changes(self) -> bool:
+        """If dirty, ask user to save. Returns True if ok to proceed."""
+        if not self._project_dirty:
+            return True
+        answer = messagebox.askyesnocancel(
+            "Unsaved Changes",
+            "You have unsaved changes. Save before closing?")
+        if answer is None:  # Cancel
+            return False
+        if answer:  # Yes — save
+            self._save_project()
+            # If still dirty (user cancelled save dialog), abort
+            return not self._project_dirty
+        return True  # No — discard
+
+    # --- Save ---
+
+    def _save_project(self):
+        """Save to current path, or prompt Save-As if no path yet."""
+        if self._project_path is None:
+            self._save_project_as()
+        else:
+            self._do_save(self._project_path)
+
+    def _save_project_as(self):
+        """Prompt for a file path and save."""
+        initial_name = self._project_name or "Untitled"
+        path = filedialog.asksaveasfilename(
+            initialfile=f"{initial_name}.spartacus",
+            defaultextension=".spartacus",
+            filetypes=[("Spartacus Project", "*.spartacus"),
+                       ("All files", "*.*")])
+        if not path:
+            return
+        self._do_save(path)
+
+    def _do_save(self, path: str):
+        """Collect state and write to disk."""
+        try:
+            state = self._collect_project_state()
+            save_project(path, state)
+            self._project_path = path
+            self._project_name = os.path.splitext(os.path.basename(path))[0]
+            self._project_dirty = False
+            self._update_title()
+            add_to_recent_projects(path, self._project_name)
+            self._refresh_recent_menu()
+            self.update_progress(100, f"Project saved: {os.path.basename(path)}")
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Failed to save project:\n{e}")
+
+    def _collect_project_state(self) -> dict:
+        """Build the complete project state dict."""
+        from datetime import datetime as dt
+        state = {
+            "metadata": {
+                "spartacus_version": "1.0",
+                "format_version": 1,
+                "created": dt.now().isoformat(),
+                "modified": dt.now().isoformat(),
+            },
+            "source_file": {
+                "path": self.file_path,
+                "basename": os.path.basename(self.file_path) if self.file_path else None,
+            },
+            "parsing_settings": {
+                "date_col": self.date_col_var.get(),
+                "cons_col": self.cons_col_var.get(),
+                "prod_col": self.prod_col_var.get(),
+                "cons_unit": self.cons_unit_var.get(),
+                "prod_unit": self.prod_unit_var.get(),
+                "hours_per_interval": self.hours_per_interval,
+                "granularity_label": self.granularity_label,
+            },
+            "site_info": {
+                "site_name": self.site_name_var.get(),
+                "grid_capacity_kw": self.grid_capacity_var.get(),
+            },
+            "battery_settings": {
+                "enabled": self.battery_enabled_var.get(),
+                "offtake_tariff": self.offtake_var.get(),
+                "injection_tariff": self.injection_var.get(),
+                "peak_tariff": self.peak_tariff_var.get(),
+            },
+            "stat_selections": {k: v.get() for k, v in self.stat_vars.items()},
+            "contract_settings": {
+                "method": self.contract_method_var.get(),
+                "db_country": self.db_country_var.get(),
+                "db_region": self.db_region_var.get(),
+                "db_contract": self.db_contract_var.get(),
+            },
+        }
+
+        # Data
+        data = {}
+        if self.transformed_df is not None:
+            data["transformed_df_csv"] = self.transformed_df.to_csv(index=False)
+        if self.metadata is not None:
+            data["metadata"] = self.metadata
+        state["data"] = data
+
+        # Results
+        results = {}
+        if self.quality_report is not None:
+            results["quality_report"] = serialize_quality_report(self.quality_report)
+        if self.kpi_data is not None:
+            results["kpi_data"] = self.kpi_data
+        if self.stats_result is not None:
+            results["stats_result"] = self.stats_result
+        if self.battery_result is not None:
+            results["battery_result"] = self.battery_result
+        if self.cost_simulation_result is not None:
+            results["cost_simulation"] = serialize_cost_simulation(
+                self.cost_simulation_result,
+                self.cost_contract,
+                self._db_base_contract)
+        state["results"] = results
+
+        return state
+
+    # --- Open / Load ---
+
+    def _open_project(self):
+        """Open a .spartacus project file."""
+        if not self._check_unsaved_changes():
+            return
+        path = filedialog.askopenfilename(
+            filetypes=[("Spartacus Project", "*.spartacus"),
+                       ("All files", "*.*")])
+        if not path:
+            return
+        self._do_open(path)
+
+    def _do_open(self, path: str):
+        """Load a project file and restore state."""
+        try:
+            state = load_project(path)
+            fmt = state.get("metadata", {}).get("format_version", 1)
+            if fmt > 1:
+                messagebox.showwarning(
+                    "Version Warning",
+                    f"This project was saved with format version {fmt}. "
+                    "Some data may not load correctly.")
+            self._restore_project_state(state)
+            self._project_path = path
+            self._project_name = os.path.splitext(os.path.basename(path))[0]
+            self._project_dirty = False
+            self._update_title()
+            add_to_recent_projects(path, self._project_name)
+            self._refresh_recent_menu()
+            self.update_progress(100, f"Project loaded: {os.path.basename(path)}")
+        except Exception as e:
+            messagebox.showerror("Open Error", f"Failed to open project:\n{e}")
+
+    def _restore_project_state(self, state: dict):
+        """Restore the full application state from a loaded project dict."""
+        self._restoring = True
+        try:
+            self._reset_state()
+
+            # Site info
+            si = state.get("site_info", {})
+            self.site_name_var.set(si.get("site_name", ""))
+            self.grid_capacity_var.set(si.get("grid_capacity_kw", ""))
+
+            # Parsing settings
+            ps = state.get("parsing_settings", {})
+            self.hours_per_interval = ps.get("hours_per_interval", 1.0)
+            self.granularity_label = ps.get("granularity_label", "unknown")
+
+            # Source CSV — try to load raw df
+            sf = state.get("source_file", {})
+            source_path = sf.get("path")
+            if source_path and os.path.isfile(source_path):
+                try:
+                    self.file_entry.delete(0, tk.END)
+                    self.file_entry.insert(0, source_path)
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        self.df, self.metadata = load_file(source_path)
+                    self.file_path = source_path
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        self.analysis = analyze_columns(self.df)
+                    self.update_file_info()
+                    self.update_preview()
+                    self.update_analysis_display()
+                    self.update_column_combos()
+                except Exception:
+                    pass  # Will still restore transformed_df below
+            elif source_path:
+                # File not found at original path — ask user
+                answer = messagebox.askyesno(
+                    "Source File Not Found",
+                    f"The original CSV file was not found:\n{source_path}\n\n"
+                    "Would you like to locate it?")
+                if answer:
+                    new_path = filedialog.askopenfilename(
+                        initialfile=sf.get("basename", ""),
+                        filetypes=[("All supported", "*.csv;*.xlsx;*.xls;*.txt;*.tsv")])
+                    if new_path:
+                        try:
+                            self.file_entry.delete(0, tk.END)
+                            self.file_entry.insert(0, new_path)
+                            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                                self.df, self.metadata = load_file(new_path)
+                            self.file_path = new_path
+                            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                                self.analysis = analyze_columns(self.df)
+                            self.update_file_info()
+                            self.update_preview()
+                            self.update_analysis_display()
+                            self.update_column_combos()
+                        except Exception:
+                            pass
+
+            # Restore transformed_df
+            data_sec = state.get("data", {})
+            csv_str = data_sec.get("transformed_df_csv")
+            if csv_str:
+                self.transformed_df = pd.read_csv(io.StringIO(csv_str))
+                if "Date & Time" in self.transformed_df.columns:
+                    self.transformed_df["Date & Time"] = pd.to_datetime(
+                        self.transformed_df["Date & Time"])
+                # Enable buttons
+                self.transform_btn.set_enabled(True)
+                self.quality_btn.set_enabled(True)
+                self.export_btn.set_enabled(True)
+
+            # Restore metadata if not already loaded from file
+            if self.metadata is None and data_sec.get("metadata"):
+                self.metadata = data_sec["metadata"]
+
+            # Restore column selections from parsing_settings
+            if ps.get("date_col"):
+                self.date_col_var.set(ps["date_col"])
+            if ps.get("cons_col"):
+                self.cons_col_var.set(ps["cons_col"])
+            if ps.get("prod_col"):
+                self.prod_col_var.set(ps["prod_col"])
+            if ps.get("cons_unit"):
+                self.cons_unit_var.set(ps["cons_unit"])
+            if ps.get("prod_unit"):
+                self.prod_unit_var.set(ps["prod_unit"])
+
+            # Granularity display
+            self.granularity_label_widget.config(
+                text=f"Detected granularity: {self.granularity_label}")
+
+            # Results
+            results = state.get("results", {})
+
+            # Quality report
+            qr = results.get("quality_report")
+            if qr:
+                self.quality_report = deserialize_quality_report(qr)
+                self.display_quality_report()
+                self.correct_btn.set_enabled(True)
+
+            # KPI data
+            kpi = results.get("kpi_data")
+            if kpi:
+                self.display_kpi_dashboard(kpi)
+
+            # Stat selections
+            stat_sel = state.get("stat_selections", {})
+            for k, v in stat_sel.items():
+                if k in self.stat_vars:
+                    self.stat_vars[k].set(v)
+
+            # Stats result
+            sr = results.get("stats_result")
+            if sr:
+                self.stats_result = sr
+                try:
+                    self._display_stats_text()
+                    self._display_stats_charts()
+                except Exception:
+                    pass  # Non-critical
+
+            # Battery settings
+            bs = state.get("battery_settings", {})
+            self.battery_enabled_var.set(bs.get("enabled", False))
+            self.offtake_var.set(bs.get("offtake_tariff", "250"))
+            self.injection_var.set(bs.get("injection_tariff", "50"))
+            self.peak_tariff_var.set(bs.get("peak_tariff", "50"))
+            self._toggle_battery_inputs()
+
+            # Battery result
+            br = results.get("battery_result")
+            if br:
+                self.battery_result = br
+                try:
+                    rec = br.get("recommendations", {})
+                    savings = br.get("savings", {})
+                    if rec and savings:
+                        self._display_battery_results(rec, savings)
+                except Exception:
+                    pass
+
+            # Contract settings
+            cs = state.get("contract_settings", {})
+            method = cs.get("method", "database")
+            self.contract_method_var.set(method)
+            self._switch_contract_method()
+            if cs.get("db_country"):
+                self.db_country_var.set(cs["db_country"])
+                self._on_db_country_changed(None)
+            if cs.get("db_region"):
+                self.db_region_var.set(cs["db_region"])
+                self._on_db_region_changed(None)
+            if cs.get("db_contract"):
+                self.db_contract_var.set(cs["db_contract"])
+
+            # Cost simulation
+            cost_data = results.get("cost_simulation")
+            if cost_data:
+                deser = deserialize_cost_simulation(cost_data)
+                if deser:
+                    # Restore contract
+                    if deser.get("contract"):
+                        self.cost_contract = deser["contract"]
+                        self._set_active_contract(self.cost_contract)
+                    if deser.get("db_base_contract"):
+                        self._db_base_contract = deser["db_base_contract"]
+
+                    # Try to re-run simulation to get detail_df
+                    if self.transformed_df is not None and self.cost_contract is not None:
+                        try:
+                            df = self.transformed_df.copy()
+                            df["Date & Time"] = pd.to_datetime(df["Date & Time"])
+                            cons_df = df.set_index("Date & Time")[["Consumption (kW)"]].rename(
+                                columns={"Consumption (kW)": "consumption_kw"})
+                            prod_df = None
+                            if "Production (kW)" in df.columns:
+                                prod_df = df.set_index("Date & Time")[["Production (kW)"]].rename(
+                                    columns={"Production (kW)": "production_kw"})
+                            simulator = CostSimulator(self.cost_contract)
+                            detail_df, summary, monthly = simulator.simulate(cons_df, prod_df)
+                            self.cost_simulation_result = (detail_df, summary, monthly)
+                            self._display_cost_results(summary, monthly)
+                            self._display_cost_charts(summary, monthly)
+                        except Exception:
+                            # Fallback: display saved summary
+                            self.cost_simulation_result = None
+                            pass
+
+        finally:
+            self._restoring = False
+
+    def _reset_state(self):
+        """Clear all data and reset the GUI to initial state."""
+        # Data
+        self.file_path = None
+        self.df = None
+        self.metadata = None
+        self.analysis = None
+        self.transformed_df = None
+        self.quality_report = None
+        self.hours_per_interval = 1.0
+        self.granularity_label = "unknown"
+        self.kpi_data = None
+        self.stats_result = None
+        self.battery_result = None
+        self.cost_simulation_result = None
+        self.cost_contract = None
+        self._db_base_contract = None
+        self._battery_sizer = None if hasattr(self, '_battery_sizer') else None
+
+        # StringVars
+        self.site_name_var.set("")
+        self.grid_capacity_var.set("")
+        self.date_col_var.set("0")
+        self.cons_col_var.set("1")
+        self.prod_col_var.set("none")
+        self.cons_unit_var.set("kW")
+        self.prod_unit_var.set("kW")
+
+        # File entry
+        self.file_entry.delete(0, tk.END)
+        self.file_info_label.config(text="No file loaded")
+
+        # Analysis text
+        self.analysis_text.config(state=tk.NORMAL)
+        self.analysis_text.delete(1.0, tk.END)
+        self.analysis_text.config(state=tk.DISABLED)
+
+        # Preview
+        self.preview_tree.delete(*self.preview_tree.get_children())
+
+        # Granularity
+        self.granularity_label_widget.config(text="Detected granularity: --")
+
+        # Buttons
+        self.transform_btn.set_enabled(False)
+        self.quality_btn.set_enabled(False)
+        self.correct_btn.set_enabled(False)
+        self.export_btn.set_enabled(False)
+        self.battery_charts_btn.set_enabled(False)
+
+        # Results
+        self.results_text.config(state=tk.NORMAL)
+        self.results_text.delete(1.0, tk.END)
+        self.results_text.config(state=tk.DISABLED)
+
+        # Stats
+        self.stats_text.config(state=tk.NORMAL)
+        self.stats_text.delete(1.0, tk.END)
+        self.stats_text.config(state=tk.DISABLED)
+        self._chart_images.clear()
+        for w in self.chart_frame.winfo_children():
+            w.destroy()
+
+        # KPI
+        for w in self.kpi_frame.winfo_children():
+            w.destroy()
+        for w in self.kpi_detail_frame.winfo_children():
+            w.destroy()
+        self.kpi_placeholder.pack(anchor=tk.W, pady=5)
+
+        # Battery
+        self.battery_enabled_var.set(False)
+        self.offtake_var.set("250")
+        self.injection_var.set("50")
+        self.peak_tariff_var.set("50")
+        self._toggle_battery_inputs()
+        for w in self.battery_results_frame.winfo_children():
+            w.destroy()
+        self._battery_chart_images.clear()
+        for w in self.battery_chart_frame.winfo_children():
+            w.destroy()
+
+        # Cost
+        self.contract_summary_text.config(state=tk.NORMAL)
+        self.contract_summary_text.delete(1.0, tk.END)
+        self.contract_summary_text.config(state=tk.DISABLED)
+        for w in self.cost_results_frame.winfo_children():
+            w.destroy()
+        self._cost_chart_images.clear()
+        for w in self.cost_chart_frame.winfo_children():
+            w.destroy()
+        for w in self.battery_link_frame.winfo_children():
+            w.destroy()
+
+        # Progress
+        self.progress_var.set(0)
+        self.progress_label.config(text="Ready")
+
+    def _new_project(self):
+        """Start a new empty project."""
+        if not self._check_unsaved_changes():
+            return
+        self._reset_state()
+        self._project_path = None
+        self._project_name = "Untitled"
+        self._project_dirty = False
+        self._update_title()
+
+    # --- Recent Projects ---
+
+    def _refresh_recent_menu(self):
+        """Rebuild the Recent Projects submenu."""
+        self.recent_menu.delete(0, tk.END)
+        projects = load_recent_projects()
+        if not projects:
+            self.recent_menu.add_command(label="(none)", state="disabled")
+            return
+        for proj in projects:
+            path = proj["path"]
+            name = proj.get("name", os.path.basename(path))
+            self.recent_menu.add_command(
+                label=f"{name}  —  {path}",
+                command=lambda p=path: self._open_recent(p))
+        self.recent_menu.add_separator()
+        self.recent_menu.add_command(label="Clear Recent",
+                                     command=self._clear_recent)
+
+    def _open_recent(self, path: str):
+        """Open a recent project by path."""
+        if not os.path.isfile(path):
+            messagebox.showerror("File Not Found",
+                                 f"Project file not found:\n{path}")
+            return
+        if not self._check_unsaved_changes():
+            return
+        self._do_open(path)
+
+    def _clear_recent(self):
+        """Clear the recent projects list."""
+        from spartacus_project import save_recent_projects
+        save_recent_projects([])
+        self._refresh_recent_menu()
 
 
 class CorrectionDialog(tk.Toplevel):
