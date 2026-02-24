@@ -7,6 +7,7 @@ Property of ReVolta srl. All rights reserved.
 import os
 import sys
 import io
+import copy
 import subprocess
 import threading
 import tkinter as tk
@@ -217,6 +218,13 @@ class EnergyParserGUI:
         self.battery_result = None
         self.cost_simulation_result = None  # (detail_df, summary, monthly)
         self.cost_contract = None           # Current EnergyContract
+        self._db_base_contract = None       # DB contract before user energy prices
+        self._ep_frame = None               # Energy price panel frame
+        self._ep_supplier_var = None        # StringVar for supplier name
+        self._ep_price_type_var = None      # StringVar for price type
+        self._ep_period_vars = []           # List of StringVars for per-period prices
+        self._ep_flat_price_var = None      # StringVar for flat price
+        self._ep_warning_label = None       # Validation warning label
 
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
@@ -1898,6 +1906,7 @@ class EnergyParserGUI:
         """Create the energy cost simulation section."""
         content = self.create_card(self.content_frame,
                                    "10. Energy Cost Simulation")
+        self._cost_content_frame = content
 
         # --- Contract Input Method Selection ---
         method_frame = tk.Frame(content, bg=COLORS["white"])
@@ -1986,10 +1995,10 @@ class EnergyParserGUI:
         self.db_load_btn.pack(side=tk.LEFT, padx=5)
 
         self.db_clone_btn = ModernButton(
-            db_btn_row, "Clone & Modify",
+            db_btn_row, "Advanced: Edit Full Contract",
             command=self._clone_contract_from_db,
             bg=COLORS["light_gray"], fg=COLORS["primary"],
-            width=140, height=35)
+            width=200, height=35)
         self.db_clone_btn.pack(side=tk.LEFT, padx=5)
 
         # Load the DB
@@ -2032,30 +2041,30 @@ class EnergyParserGUI:
         self.contract_summary_text.config(state=tk.DISABLED)
 
         # --- Simulation Buttons ---
-        sim_btn_row = tk.Frame(content, bg=COLORS["white"])
-        sim_btn_row.pack(fill=tk.X, pady=10)
+        self._sim_btn_row = tk.Frame(content, bg=COLORS["white"])
+        self._sim_btn_row.pack(fill=tk.X, pady=10)
 
         self.simulate_btn = ModernButton(
-            sim_btn_row, "Simulate Costs",
+            self._sim_btn_row, "Simulate Costs",
             command=self.run_cost_simulation,
             bg=COLORS["secondary"], width=160, height=40)
         self.simulate_btn.pack(side=tk.LEFT, padx=5)
 
         self.export_contract_btn = ModernButton(
-            sim_btn_row, "Export Contract JSON",
+            self._sim_btn_row, "Export Contract JSON",
             command=self._export_contract_json,
             bg=COLORS["light_gray"], fg=COLORS["primary"],
             width=160, height=40)
         self.export_contract_btn.pack(side=tk.LEFT, padx=5)
 
         self.export_cost_xlsx_btn = ModernButton(
-            sim_btn_row, "Export Cost Excel",
+            self._sim_btn_row, "Export Cost Excel",
             command=self._export_cost_xlsx,
             bg=COLORS["success"], width=150, height=40)
         self.export_cost_xlsx_btn.pack(side=tk.LEFT, padx=5)
 
         self.generate_pdf_btn = ModernButton(
-            sim_btn_row, "Generate PDF Report",
+            self._sim_btn_row, "Generate PDF Report",
             command=self.generate_report,
             bg=COLORS["primary"], width=180, height=40)
         self.generate_pdf_btn.pack(side=tk.LEFT, padx=5)
@@ -2488,6 +2497,9 @@ class EnergyParserGUI:
         """Show/hide panels based on selected contract input method."""
         method = self.contract_method_var.get()
 
+        # Destroy energy price panel when leaving DB mode
+        self._destroy_energy_price_panel()
+
         # If switching TO manual, offer to pre-fill from currently selected DB contract
         if method == "manual" and self.db_contract_var.get():
             country = self.db_country_var.get()
@@ -2584,7 +2596,7 @@ class EnergyParserGUI:
         self.db_description_text.config(state=tk.DISABLED)
 
     def _load_contract_from_db(self):
-        """Load selected contract from database."""
+        """Load selected contract from database (hybrid mode: regulated values + user energy prices)."""
         country = self.db_country_var.get()
         region = self.db_region_var.get()
         name = self.db_contract_var.get()
@@ -2595,7 +2607,12 @@ class EnergyParserGUI:
         contract = (self._contracts_db.get(country, {})
                     .get(region, {}).get(name))
         if contract:
+            # Store deep copy as base contract for hybrid mode
+            self._db_base_contract = copy.deepcopy(contract)
+            # Show regulated summary
             self._set_active_contract(contract)
+            # Build energy price input panel
+            self._build_energy_price_panel(contract)
 
     def _clone_contract_from_db(self):
         """Clone a database contract and switch to manual editing."""
@@ -2948,6 +2965,235 @@ class EnergyParserGUI:
             messagebox.showerror("Input Error",
                                  f"Invalid contract values:\n{str(e)}")
 
+    # --- Energy Price Panel (DB Hybrid Mode) ---
+
+    def _build_energy_price_panel(self, contract: EnergyContract):
+        """Build the energy price input panel for DB hybrid mode."""
+        # Destroy any existing panel first
+        self._destroy_energy_price_panel()
+
+        self._ep_frame = tk.Frame(self._cost_content_frame, bg=COLORS["white"])
+        # Insert between contract summary and sim buttons
+        self._ep_frame.pack(fill=tk.X, pady=5,
+                            before=self._sim_btn_row)
+
+        # Orange banner
+        banner = tk.Frame(self._ep_frame, bg="#FF8C00")
+        banner.pack(fill=tk.X)
+        tk.Label(banner,
+                 text="  ENERGY PRICES \u2014 Enter your supplier's values",
+                 font=("Segoe UI", 11, "bold"),
+                 bg="#FF8C00", fg=COLORS["white"],
+                 padx=10, pady=8).pack(side=tk.LEFT)
+
+        # Help text
+        tk.Label(self._ep_frame,
+                 text="You can find these values on your electricity bill or contract.",
+                 font=("Segoe UI", 9, "italic"),
+                 bg=COLORS["white"], fg="#666666",
+                 padx=15, pady=(5, 2)).pack(anchor=tk.W)
+
+        # Supplier name
+        sup_row = tk.Frame(self._ep_frame, bg=COLORS["white"])
+        sup_row.pack(fill=tk.X, padx=15, pady=3)
+        tk.Label(sup_row, text="Supplier name:", font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT)
+        self._ep_supplier_var = tk.StringVar(
+            value=contract.supplier if contract.supplier else "")
+        tk.Entry(sup_row, textvariable=self._ep_supplier_var,
+                 font=("Segoe UI", 9), width=30).pack(side=tk.LEFT, padx=5)
+
+        # Price type
+        pt_row = tk.Frame(self._ep_frame, bg=COLORS["white"])
+        pt_row.pack(fill=tk.X, padx=15, pady=3)
+        tk.Label(pt_row, text="Price type:", font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT)
+        self._ep_price_type_var = tk.StringVar(
+            value=contract.energy.price_type.value)
+        pt_combo = ttk.Combobox(
+            pt_row, textvariable=self._ep_price_type_var,
+            values=["fixed", "indexed", "spot"],
+            width=12, state="readonly", font=("Segoe UI", 9))
+        pt_combo.pack(side=tk.LEFT, padx=5)
+
+        # Period price rows
+        self._ep_period_vars = []
+        if contract.energy.time_periods:
+            periods_label = tk.Label(
+                self._ep_frame,
+                text="Energy price per time period:",
+                font=("Segoe UI", 9, "bold"),
+                bg=COLORS["white"], fg=COLORS["primary"],
+                padx=15, pady=(8, 2))
+            periods_label.pack(anchor=tk.W)
+
+            for i, tp in enumerate(contract.energy.time_periods):
+                row = tk.Frame(self._ep_frame, bg="#FFFBE6")
+                row.pack(fill=tk.X, padx=15, pady=1)
+
+                tk.Label(row, text=f"  {tp.name}:",
+                         font=("Segoe UI", 9),
+                         bg="#FFFBE6", fg=COLORS["text_dark"],
+                         width=30, anchor=tk.W).pack(side=tk.LEFT)
+
+                var = tk.StringVar(value="")
+                entry = tk.Entry(row, textvariable=var,
+                                 font=("Segoe UI", 9), width=10,
+                                 justify=tk.RIGHT)
+                entry.pack(side=tk.LEFT, padx=3)
+
+                tk.Label(row, text="\u20ac/kWh",
+                         font=("Segoe UI", 8),
+                         bg="#FFFBE6", fg="#666666").pack(side=tk.LEFT)
+
+                grid_price = tp.grid_energy_eur_per_kwh
+                tk.Label(row,
+                         text=f"  (grid: {grid_price:.4f} \u20ac/kWh)",
+                         font=("Segoe UI", 8, "italic"),
+                         bg="#FFFBE6", fg="#888888").pack(side=tk.LEFT, padx=5)
+
+                self._ep_period_vars.append(var)
+
+        # Flat / average price row
+        flat_row = tk.Frame(self._ep_frame, bg="#FFFBE6")
+        flat_row.pack(fill=tk.X, padx=15, pady=(5, 1))
+
+        flat_label = "Flat average price:" if contract.energy.time_periods else "Energy price:"
+        tk.Label(flat_row, text=f"  {flat_label}",
+                 font=("Segoe UI", 9),
+                 bg="#FFFBE6", fg=COLORS["text_dark"],
+                 width=30, anchor=tk.W).pack(side=tk.LEFT)
+
+        self._ep_flat_price_var = tk.StringVar(value="")
+        tk.Entry(flat_row, textvariable=self._ep_flat_price_var,
+                 font=("Segoe UI", 9), width=10,
+                 justify=tk.RIGHT).pack(side=tk.LEFT, padx=3)
+
+        tk.Label(flat_row, text="\u20ac/kWh",
+                 font=("Segoe UI", 8),
+                 bg="#FFFBE6", fg="#666666").pack(side=tk.LEFT)
+
+        if contract.energy.time_periods:
+            tk.Label(flat_row,
+                     text="  (optional if period prices filled)",
+                     font=("Segoe UI", 8, "italic"),
+                     bg="#FFFBE6", fg="#888888").pack(side=tk.LEFT, padx=5)
+
+        # Warning label
+        self._ep_warning_label = tk.Label(
+            self._ep_frame, text="",
+            font=("Segoe UI", 9, "bold"),
+            bg=COLORS["white"], fg=COLORS["secondary"],
+            padx=15, pady=5)
+        self._ep_warning_label.pack(anchor=tk.W)
+
+    def _validate_energy_prices(self) -> bool:
+        """Validate that the user has entered energy prices. Returns True if valid."""
+        if self._db_base_contract is None:
+            return True
+
+        contract = self._db_base_contract
+        is_spot = contract.energy.price_type == PriceType.SPOT
+
+        # For spot contracts or contracts with no time periods, require flat price
+        if is_spot or not contract.energy.time_periods:
+            flat_str = self._ep_flat_price_var.get().strip() if self._ep_flat_price_var else ""
+            try:
+                flat_val = float(flat_str) if flat_str else 0.0
+            except ValueError:
+                flat_val = 0.0
+
+            if flat_val <= 0:
+                if self._ep_warning_label:
+                    self._ep_warning_label.config(
+                        text="Please enter an energy price (> 0 \u20ac/kWh).")
+                return False
+        else:
+            # For periodic contracts, require at least one period price > 0
+            any_period = False
+            for var in self._ep_period_vars:
+                try:
+                    val = float(var.get().strip()) if var.get().strip() else 0.0
+                except ValueError:
+                    val = 0.0
+                if val > 0:
+                    any_period = True
+                    break
+
+            flat_str = self._ep_flat_price_var.get().strip() if self._ep_flat_price_var else ""
+            try:
+                flat_val = float(flat_str) if flat_str else 0.0
+            except ValueError:
+                flat_val = 0.0
+
+            if not any_period and flat_val <= 0:
+                if self._ep_warning_label:
+                    self._ep_warning_label.config(
+                        text="Please enter at least one energy price (period or flat).")
+                return False
+
+        # Clear warning on success
+        if self._ep_warning_label:
+            self._ep_warning_label.config(text="")
+        return True
+
+    def _merge_energy_prices(self) -> EnergyContract:
+        """Merge user-entered energy prices into the DB base contract."""
+        contract = copy.deepcopy(self._db_base_contract)
+
+        # Override supplier name
+        if self._ep_supplier_var:
+            supplier = self._ep_supplier_var.get().strip()
+            if supplier:
+                contract.supplier = supplier
+
+        # Override price type
+        if self._ep_price_type_var:
+            pt = self._ep_price_type_var.get().strip()
+            for ptype in PriceType:
+                if ptype.value == pt:
+                    contract.energy.price_type = ptype
+                    break
+
+        # Override period prices
+        for i, var in enumerate(self._ep_period_vars):
+            if i < len(contract.energy.time_periods):
+                try:
+                    val = float(var.get().strip()) if var.get().strip() else 0.0
+                except ValueError:
+                    val = 0.0
+                contract.energy.time_periods[i].price_eur_per_kwh = val
+
+        # Override flat price
+        if self._ep_flat_price_var:
+            try:
+                flat = float(self._ep_flat_price_var.get().strip()) if self._ep_flat_price_var.get().strip() else 0.0
+            except ValueError:
+                flat = 0.0
+            contract.energy.flat_price_eur_per_kwh = flat
+
+        # If user filled period prices but not flat, compute weighted average as flat
+        if contract.energy.time_periods and flat == 0.0:
+            period_prices = [tp.price_eur_per_kwh for tp in contract.energy.time_periods]
+            nonzero = [p for p in period_prices if p > 0]
+            if nonzero:
+                contract.energy.flat_price_eur_per_kwh = sum(nonzero) / len(nonzero)
+
+        contract.source = "database"
+        return contract
+
+    def _destroy_energy_price_panel(self):
+        """Destroy the energy price panel and reset hybrid mode state."""
+        if self._ep_frame is not None:
+            self._ep_frame.destroy()
+            self._ep_frame = None
+        self._db_base_contract = None
+        self._ep_supplier_var = None
+        self._ep_price_type_var = None
+        self._ep_period_vars = []
+        self._ep_flat_price_var = None
+        self._ep_warning_label = None
+
     # --- Contract Management ---
 
     def _set_active_contract(self, contract: EnergyContract):
@@ -2963,6 +3209,11 @@ class EnergyParserGUI:
         # Update summary display
         self.contract_summary_text.config(state=tk.NORMAL)
         self.contract_summary_text.delete(1.0, tk.END)
+        # In DB hybrid mode, prepend regulated values header
+        if self._db_base_contract is not None:
+            self.contract_summary_text.insert(
+                tk.END,
+                "=== REGULATED VALUES (auto-filled from database) ===\n\n")
         self.contract_summary_text.insert(tk.END, contract.summary())
         self.contract_summary_text.config(state=tk.DISABLED)
 
@@ -2979,6 +3230,12 @@ class EnergyParserGUI:
             messagebox.showwarning("Warning",
                                    "Please load or define a contract first.")
             return
+
+        # In DB hybrid mode, validate and merge user energy prices
+        if self._db_base_contract is not None:
+            if not self._validate_energy_prices():
+                return
+            self.cost_contract = self._merge_energy_prices()
 
         self.update_progress(10, "Preparing cost simulation...")
 
