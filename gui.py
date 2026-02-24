@@ -46,6 +46,7 @@ from energy_parser.report_generator import (
     generate_histogram_chart, generate_cdf_chart,
     generate_peak_hour_frequency_chart,
     generate_cost_breakdown_pie, generate_monthly_cost_bar_chart,
+    generate_monthly_bar_chart,
     generate_scenario_comparison_chart,
 )
 from energy_parser.battery_sizing import BatterySizer
@@ -1412,6 +1413,18 @@ class EnergyParserGUI:
         for w in self.chart_frame.winfo_children():
             w.destroy()
 
+        if "monthly_totals" in selected:
+            yearly = self.stats_result.get("yearly", {})
+            for col_name, col_stats in yearly.items():
+                monthly = col_stats.get("monthly_totals", {})
+                if monthly:
+                    try:
+                        chart_bytes = generate_monthly_bar_chart(
+                            monthly, col_name)
+                        self._display_chart(chart_bytes)
+                    except Exception:
+                        pass
+
         if "seasonal_profile" in selected:
             seasonal = self.stats_result.get("seasonal", {})
             for col_name, seasons_dict in seasonal.items():
@@ -1419,22 +1432,12 @@ class EnergyParserGUI:
                     profile_df = seasons_dict.get(season_name)
                     if profile_df is None:
                         continue
-
-                    chart_bytes = generate_seasonal_chart(
-                        profile_df, col_name, season_name)
-
-                    img = Image.open(io.BytesIO(chart_bytes))
-                    display_width = 750
-                    ratio = display_width / img.width
-                    display_height = int(img.height * ratio)
-                    img = img.resize((display_width, display_height),
-                                      Image.Resampling.LANCZOS)
-                    photo = ImageTk.PhotoImage(img)
-                    self._chart_images.append(photo)
-
-                    label = tk.Label(self.chart_frame, image=photo,
-                                      bg=COLORS["white"])
-                    label.pack(pady=3)
+                    try:
+                        chart_bytes = generate_seasonal_chart(
+                            profile_df, col_name, season_name)
+                        self._display_chart(chart_bytes)
+                    except Exception:
+                        pass
 
         if "peak_analysis" in selected:
             peaks = self.stats_result.get("peaks", {})
@@ -1442,35 +1445,40 @@ class EnergyParserGUI:
                 if not peak_data.get("top_peaks"):
                     continue
 
-                chart_generators = [
-                    lambda: generate_peak_value_trend_chart(
-                        peak_data["top_peaks"], col_name),
-                    lambda: generate_peak_timeline_chart(
-                        peak_data.get("peak_timeline", []), col_name),
-                    lambda: generate_peak_duration_chart(
-                        peak_data["top_peaks"], col_name),
-                    lambda: generate_peak_heatmap(
-                        peak_data.get("patterns", {}).get(
-                            "hourly_distribution", {}),
-                        peak_data.get("patterns", {}).get(
-                            "daily_distribution", {}),
-                        col_name),
-                ]
+                # Value trend chart
+                try:
+                    chart_bytes = generate_peak_value_trend_chart(
+                        peak_data["top_peaks"], col_name)
+                    self._display_chart(chart_bytes)
+                except Exception:
+                    pass
 
-                for gen in chart_generators:
-                    chart_bytes = gen()
-                    img = Image.open(io.BytesIO(chart_bytes))
-                    display_width = 750
-                    ratio = display_width / img.width
-                    display_height = int(img.height * ratio)
-                    img = img.resize((display_width, display_height),
-                                      Image.Resampling.LANCZOS)
-                    photo = ImageTk.PhotoImage(img)
-                    self._chart_images.append(photo)
+                # Timeline chart
+                try:
+                    chart_bytes = generate_peak_timeline_chart(
+                        peak_data.get("peak_timeline", []), col_name)
+                    self._display_chart(chart_bytes)
+                except Exception:
+                    pass
 
-                    label = tk.Label(self.chart_frame, image=photo,
-                                      bg=COLORS["white"])
-                    label.pack(pady=3)
+                # Duration chart
+                try:
+                    chart_bytes = generate_peak_duration_chart(
+                        peak_data["top_peaks"], col_name)
+                    self._display_chart(chart_bytes)
+                except Exception:
+                    pass
+
+                # Heatmap
+                try:
+                    patterns = peak_data.get("patterns", {})
+                    chart_bytes = generate_peak_heatmap(
+                        patterns.get("hourly_distribution", {}),
+                        patterns.get("daily_distribution", {}),
+                        col_name)
+                    self._display_chart(chart_bytes)
+                except Exception:
+                    pass
 
         if "frequency_histogram" in selected:
             histogram = self.stats_result.get("histogram", {})
