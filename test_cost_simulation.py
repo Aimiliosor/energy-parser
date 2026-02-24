@@ -80,15 +80,17 @@ def main():
     try:
         db_path = get_default_db_path()
         assert os.path.exists(db_path), f"DB not found at {db_path}"
-        db = load_contracts_db(db_path)
-        assert "BE" in db
-        assert "FR" in db
+        db, metadata = load_contracts_db(db_path)
+        assert "Belgium" in db
+        assert "France" in db
         total_contracts = sum(
             len(contracts)
             for country in db.values()
-            for contracts in country.values()
+            for region in country.values()
+            for contracts in [region]
         )
         assert total_contracts >= 2
+        assert len(metadata) >= 2
         print(f"  PASS: DB loaded with {total_contracts} contracts")
         passed += 1
     except Exception as e:

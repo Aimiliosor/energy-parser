@@ -525,33 +525,83 @@ def load_contract_json(path: str) -> EnergyContract:
         return contract_from_dict(json.load(f))
 
 
-def load_contracts_db(path: str) -> dict:
+def _get_region_dso(contract_id: str, country_code: str) -> str:
+    """Extract region/DSO label from contract ID prefix."""
+    _prefix_map = {
+        "BE-FL": "Flanders — Fluvius",
+        "BE-WAL": "Wallonia — ORES/RESA",
+        "BE-BXL": "Brussels — Sibelga",
+    }
+    # Check Belgian regional prefixes (longest first)
+    for prefix, label in _prefix_map.items():
+        if contract_id.startswith(prefix):
+            return label
+    # Default by country
+    _country_defaults = {
+        "FR": "Enedis (national)",
+        "BE": "Belgium (general)",
+        "NL": "Netherlands",
+        "DE": "Germany",
+    }
+    return _country_defaults.get(country_code, country_code)
+
+
+def _country_display_name(country_code: str) -> str:
+    """Convert country code to display name."""
+    _names = {"FR": "France", "BE": "Belgium", "NL": "Netherlands", "DE": "Germany"}
+    return _names.get(country_code, country_code)
+
+
+def load_contracts_db(path: str) -> tuple[dict, dict]:
     """Load the contracts database JSON.
 
-    Returns dict: {country: {supplier: {contract_name: EnergyContract}}}
+    Returns:
+        hierarchy: {country_display: {region_dso: {contract_name: EnergyContract}}}
+        metadata: {contract_name: {"id": str, "description": str, "notes": str}}
     """
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    db = {}
+    hierarchy = {}
+    metadata = {}
     for entry in data.get("contracts", []):
-        country = entry.get("country", "Unknown")
-        supplier = entry.get("supplier", "Unknown")
+        contract_id = entry.get("id", "")
+        country_code = entry.get("country", "Unknown")
         name = entry.get("contract_name", "Unnamed")
+        description = entry.get("description", "")
+
+        # Collect all notes from sub-sections
+        notes_parts = []
+        for section in ("energy", "grid", "taxes", "production"):
+            section_notes = entry.get(section, {}).get("notes", "")
+            if section_notes:
+                notes_parts.append(f"[{section.title()}] {section_notes}")
+
         contract = contract_from_dict(entry)
-        db.setdefault(country, {}).setdefault(supplier, {})[name] = contract
-    return db
+
+        country_display = _country_display_name(country_code)
+        region_dso = _get_region_dso(contract_id, country_code)
+
+        hierarchy.setdefault(country_display, {}).setdefault(
+            region_dso, {})[name] = contract
+        metadata[name] = {
+            "id": contract_id,
+            "description": description,
+            "notes": "\n".join(notes_parts),
+        }
+
+    return hierarchy, metadata
 
 
 def save_contracts_db(db: dict, path: str):
     """Save the contracts database to JSON.
 
-    db: {country: {supplier: {contract_name: EnergyContract}}}
+    db: {country_display: {region_dso: {contract_name: EnergyContract}}}
     """
     contracts_list = []
-    for country_contracts in db.values():
-        for supplier_contracts in country_contracts.values():
-            for contract in supplier_contracts.values():
+    for region_contracts in db.values():
+        for contracts in region_contracts.values():
+            for contract in contracts.values():
                 contracts_list.append(contract_to_dict(contract))
 
     with open(path, "w", encoding="utf-8") as f:

@@ -1959,23 +1959,37 @@ class EnergyParserGUI:
         self.db_country_combo.bind("<<ComboboxSelected>>",
                                     self._on_db_country_changed)
 
-        tk.Label(db_row1, text="Supplier:", font=("Segoe UI", 9),
+        tk.Label(db_row1, text="Region / DSO:", font=("Segoe UI", 9),
                  bg=COLORS["white"]).pack(side=tk.LEFT, padx=(15, 5))
-        self.db_supplier_var = tk.StringVar()
-        self.db_supplier_combo = ttk.Combobox(
-            db_row1, textvariable=self.db_supplier_var,
+        self.db_region_var = tk.StringVar()
+        self.db_region_combo = ttk.Combobox(
+            db_row1, textvariable=self.db_region_var,
             width=25, state="readonly", font=("Segoe UI", 9))
-        self.db_supplier_combo.pack(side=tk.LEFT, padx=5)
-        self.db_supplier_combo.bind("<<ComboboxSelected>>",
-                                     self._on_db_supplier_changed)
+        self.db_region_combo.pack(side=tk.LEFT, padx=5)
+        self.db_region_combo.bind("<<ComboboxSelected>>",
+                                   self._on_db_region_changed)
 
-        tk.Label(db_row1, text="Contract:", font=("Segoe UI", 9),
-                 bg=COLORS["white"]).pack(side=tk.LEFT, padx=(15, 5))
+        db_row2 = tk.Frame(self.contract_db_frame, bg=COLORS["white"])
+        db_row2.pack(fill=tk.X, pady=2)
+
+        tk.Label(db_row2, text="Contract:", font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT, padx=(0, 5))
         self.db_contract_var = tk.StringVar()
         self.db_contract_combo = ttk.Combobox(
-            db_row1, textvariable=self.db_contract_var,
-            width=30, state="readonly", font=("Segoe UI", 9))
-        self.db_contract_combo.pack(side=tk.LEFT, padx=5)
+            db_row2, textvariable=self.db_contract_var,
+            width=70, state="readonly", font=("Segoe UI", 9))
+        self.db_contract_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.db_contract_combo.bind("<<ComboboxSelected>>",
+                                     self._on_db_contract_selected)
+
+        # Contract description/notes display
+        self.db_description_text = tk.Text(
+            self.contract_db_frame, height=3, width=100,
+            font=("Segoe UI", 8, "italic"), bg="#F0F4F8",
+            fg=COLORS["text_dark"], relief=tk.FLAT, padx=8, pady=6,
+            wrap=tk.WORD)
+        self.db_description_text.pack(fill=tk.X, pady=(3, 0))
+        self.db_description_text.config(state=tk.DISABLED)
 
         db_btn_row = tk.Frame(self.contract_db_frame, bg=COLORS["white"])
         db_btn_row.pack(fill=tk.X, pady=5)
@@ -1995,6 +2009,7 @@ class EnergyParserGUI:
 
         # Load the DB
         self._contracts_db = {}
+        self._contracts_metadata = {}
         self._load_contracts_db()
 
         # --- Import Panel ---
@@ -2382,7 +2397,7 @@ class EnergyParserGUI:
         db_path = get_default_db_path()
         if os.path.exists(db_path):
             try:
-                self._contracts_db = load_contracts_db(db_path)
+                self._contracts_db, self._contracts_metadata = load_contracts_db(db_path)
                 countries = list(self._contracts_db.keys())
                 self.db_country_combo["values"] = countries
                 if countries:
@@ -2390,57 +2405,80 @@ class EnergyParserGUI:
                     self._on_db_country_changed(None)
             except Exception as e:
                 self._contracts_db = {}
+                self._contracts_metadata = {}
 
     def _on_db_country_changed(self, event):
-        """Update supplier list when country changes."""
+        """Update region/DSO list when country changes."""
         country = self.db_country_var.get()
-        suppliers = list(self._contracts_db.get(country, {}).keys())
-        self.db_supplier_combo["values"] = suppliers
-        if suppliers:
-            self.db_supplier_combo.set(suppliers[0])
-            self._on_db_supplier_changed(None)
+        regions = list(self._contracts_db.get(country, {}).keys())
+        self.db_region_combo["values"] = regions
+        if regions:
+            self.db_region_combo.set(regions[0])
+            self._on_db_region_changed(None)
         else:
-            self.db_supplier_combo.set("")
+            self.db_region_combo.set("")
             self.db_contract_combo["values"] = []
             self.db_contract_combo.set("")
+            self._update_db_description("")
 
-    def _on_db_supplier_changed(self, event):
-        """Update contract list when supplier changes."""
+    def _on_db_region_changed(self, event):
+        """Update contract list when region/DSO changes."""
         country = self.db_country_var.get()
-        supplier = self.db_supplier_var.get()
+        region = self.db_region_var.get()
         contracts = list(
-            self._contracts_db.get(country, {}).get(supplier, {}).keys())
+            self._contracts_db.get(country, {}).get(region, {}).keys())
         self.db_contract_combo["values"] = contracts
         if contracts:
             self.db_contract_combo.set(contracts[0])
+            self._on_db_contract_selected(None)
         else:
             self.db_contract_combo.set("")
+            self._update_db_description("")
+
+    def _on_db_contract_selected(self, event):
+        """Show description/notes when a contract is selected."""
+        name = self.db_contract_var.get()
+        meta = self._contracts_metadata.get(name, {})
+        desc = meta.get("description", "")
+        notes = meta.get("notes", "")
+        display = desc
+        if notes:
+            display += "\n" + notes if display else notes
+        self._update_db_description(display)
+
+    def _update_db_description(self, text: str):
+        """Update the contract description text area."""
+        self.db_description_text.config(state=tk.NORMAL)
+        self.db_description_text.delete("1.0", tk.END)
+        if text:
+            self.db_description_text.insert("1.0", text)
+        self.db_description_text.config(state=tk.DISABLED)
 
     def _load_contract_from_db(self):
         """Load selected contract from database."""
         country = self.db_country_var.get()
-        supplier = self.db_supplier_var.get()
+        region = self.db_region_var.get()
         name = self.db_contract_var.get()
         if not name:
             messagebox.showwarning("Warning",
                                    "Please select a contract.")
             return
         contract = (self._contracts_db.get(country, {})
-                    .get(supplier, {}).get(name))
+                    .get(region, {}).get(name))
         if contract:
             self._set_active_contract(contract)
 
     def _clone_contract_from_db(self):
         """Clone a database contract and switch to manual editing."""
         country = self.db_country_var.get()
-        supplier = self.db_supplier_var.get()
+        region = self.db_region_var.get()
         name = self.db_contract_var.get()
         if not name:
             messagebox.showwarning("Warning",
                                    "Please select a contract to clone.")
             return
         contract = (self._contracts_db.get(country, {})
-                    .get(supplier, {}).get(name))
+                    .get(region, {}).get(name))
         if contract:
             self._populate_manual_form(contract)
             self.contract_method_var.set("manual")
