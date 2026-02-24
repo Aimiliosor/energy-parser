@@ -203,12 +203,20 @@ class EnergyParserGUI:
         self.root.minsize(1000, 700)
         self.root.configure(bg=COLORS["bg"])
 
-        # Set icon if available
+        # Set Windows taskbar icon — must set AppUserModelID before iconbitmap
+        # so Windows treats Spartacus as its own app instead of grouping under python.exe
         icon_path = resource_path("favicon 1.ico")
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "ReVolta.Spartacus.EnergyParser.1"
+            )
+        except Exception:
+            pass
         if os.path.exists(icon_path):
             try:
-                self.root.iconbitmap(icon_path)
-            except:
+                self.root.iconbitmap(default=icon_path)
+            except Exception:
                 pass
 
         # Data state
