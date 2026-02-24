@@ -2180,7 +2180,8 @@ class EnergyParserGUI:
 
         # Mouse wheel scrolling
         def _on_mousewheel(event):
-            form_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            if form_canvas.winfo_exists():
+                form_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         form_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
 
         form_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
