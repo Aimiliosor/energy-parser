@@ -2026,9 +2026,13 @@ class EnergyParserGUI:
             width=180, height=35)
         self.download_template_btn.pack(side=tk.LEFT, padx=5)
 
-        # --- Manual Input Panel ---
+        # --- Manual Input Panel (lightweight – just a button to open the popup) ---
         self.contract_manual_frame = tk.Frame(content, bg=COLORS["white"])
-        self._create_manual_contract_form()
+        open_editor_btn = ModernButton(
+            self.contract_manual_frame, "Open Manual Contract Editor",
+            command=self._open_manual_contract_popup,
+            bg=COLORS["secondary"], width=250, height=38)
+        open_editor_btn.pack(pady=12)
 
         # --- Contract Summary Display ---
         self.contract_summary_frame = tk.Frame(content, bg=COLORS["white"])
@@ -2083,9 +2087,56 @@ class EnergyParserGUI:
         self.battery_link_frame = tk.Frame(content, bg=COLORS["white"])
         self.battery_link_frame.pack(fill=tk.X, pady=5)
 
-    def _create_manual_contract_form(self):
+    def _open_manual_contract_popup(self, prefill_contract=None):
+        """Open a modal popup window with the manual contract editor."""
+        # Prevent multiple popups
+        if hasattr(self, '_manual_popup') and self._manual_popup:
+            try:
+                self._manual_popup.lift()
+                return
+            except tk.TclError:
+                self._manual_popup = None
+
+        popup = tk.Toplevel(self.root)
+        popup.title("Spartacus — Manual Contract Editor")
+        popup.geometry("850x650")
+        popup.configure(bg=COLORS["white"])
+        popup.resizable(True, True)
+        self._manual_popup = popup
+
+        # Build the form inside the popup
+        self._create_manual_contract_form(parent=popup)
+
+        # Pre-fill if a contract was provided
+        if prefill_contract:
+            self._populate_manual_form(prefill_contract)
+
+        # Bottom button bar
+        btn_bar = tk.Frame(popup, bg=COLORS["white"])
+        btn_bar.pack(fill=tk.X, side=tk.BOTTOM, pady=8, padx=10)
+
+        cancel_btn = ModernButton(
+            btn_bar, "Cancel",
+            command=popup.destroy,
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=120, height=35)
+        cancel_btn.pack(side=tk.RIGHT, padx=5)
+
+        apply_btn = ModernButton(
+            btn_bar, "Apply Contract",
+            command=self._apply_manual_contract,
+            bg=COLORS["secondary"], width=160, height=35)
+        apply_btn.pack(side=tk.RIGHT, padx=5)
+
+        # Modal behavior
+        popup.transient(self.root)
+        popup.grab_set()
+        popup.protocol("WM_DELETE_WINDOW", popup.destroy)
+
+    def _create_manual_contract_form(self, parent=None):
         """Build the manual contract input form with collapsible sections."""
-        parent = self.contract_manual_frame
+        if parent is None:
+            parent = self.contract_manual_frame
 
         # Use a canvas with scrollbar for the long form
         form_canvas = tk.Canvas(parent, bg=COLORS["white"],
@@ -2365,13 +2416,6 @@ class EnergyParserGUI:
             sec_penalties, "Min. Offtake Penalty (\u20ac/kWh):", "0",
             tooltip="Penalty per kWh below minimum")
 
-        # Apply button
-        apply_btn = ModernButton(
-            form, "Apply Manual Contract",
-            command=self._apply_manual_contract,
-            bg=COLORS["secondary"], width=200, height=35)
-        apply_btn.pack(pady=10)
-
     def _create_collapsible_section(self, parent, title, initially_open=True):
         """Create a collapsible section. Returns the content frame."""
         container = tk.Frame(parent, bg=COLORS["white"])
@@ -2515,7 +2559,7 @@ class EnergyParserGUI:
                     f"'{name}'?\n\n"
                     "Click Yes to pre-fill, No for blank form.")
                 if prefill:
-                    self._populate_manual_form(contract)
+                    self._open_manual_contract_popup(prefill_contract=contract)
 
         # Hide all panels
         self.contract_db_frame.pack_forget()
@@ -2616,7 +2660,7 @@ class EnergyParserGUI:
             self._build_energy_price_panel(contract)
 
     def _clone_contract_from_db(self):
-        """Clone a database contract and switch to manual editing."""
+        """Clone a database contract into the manual editor popup."""
         country = self.db_country_var.get()
         region = self.db_region_var.get()
         name = self.db_contract_var.get()
@@ -2627,13 +2671,7 @@ class EnergyParserGUI:
         contract = (self._contracts_db.get(country, {})
                     .get(region, {}).get(name))
         if contract:
-            self._populate_manual_form(contract)
-            self.contract_method_var.set("manual")
-            self._switch_contract_method()
-            messagebox.showinfo(
-                "Contract Cloned",
-                f"Contract '{name}' loaded into manual form.\n"
-                "Modify values and click 'Apply Manual Contract'.")
+            self._open_manual_contract_popup(prefill_contract=contract)
 
     # --- Contract Import Methods ---
 
@@ -2961,6 +2999,14 @@ class EnergyParserGUI:
             )
 
             self._set_active_contract(contract)
+
+            # Close the popup if it's open
+            if hasattr(self, '_manual_popup') and self._manual_popup:
+                try:
+                    self._manual_popup.destroy()
+                except tk.TclError:
+                    pass
+                self._manual_popup = None
 
         except (ValueError, TypeError) as e:
             messagebox.showerror("Input Error",
