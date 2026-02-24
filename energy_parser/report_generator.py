@@ -811,23 +811,24 @@ def generate_cost_breakdown_pie(cost_data: dict) -> bytes:
         buf.seek(0)
         return buf.read()
 
-    fig, ax = plt.subplots(figsize=(7, 4), dpi=120)
+    fig, ax = plt.subplots(figsize=(6, 6), dpi=120)
     wedges, texts, autotexts = ax.pie(
         values, labels=labels, autopct="%1.1f%%",
         colors=pie_colors[:len(values)],
         startangle=90, pctdistance=0.80,
-        textprops={"fontsize": 8})
+        textprops={"fontsize": 9})
 
     for t in autotexts:
-        t.set_fontsize(7)
+        t.set_fontsize(8)
         t.set_fontweight("bold")
 
+    ax.set_aspect("equal")
     ax.set_title("Cost Breakdown", fontsize=12, fontweight="bold",
                  color=BRAND_PRIMARY, pad=15)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.5)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight")
+    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
     buf.seek(0)
     return buf.read()
@@ -981,8 +982,6 @@ def generate_pdf_report(output_path: str,
 
     # --- Site Information ---
     if site_info:
-        story.append(_section_heading("Site Information"))
-        story.append(Spacer(1, 4 * mm))
         site_rows = [
             ["Field", "Value"],
             ["Site Name", site_info.get("site_name", "N/A")],
@@ -1011,14 +1010,20 @@ def generate_pdf_report(output_path: str,
             if i % 2 == 0:
                 site_style.append(("BACKGROUND", (0, i), (-1, i), _RL_BG))
         site_table.setStyle(TableStyle(site_style))
-        story.append(site_table)
+        story.append(KeepTogether([
+            _section_heading("Site Information"),
+            Spacer(1, 4 * mm),
+            site_table,
+        ]))
         story.append(Spacer(1, 6 * mm))
 
     # --- KPI Summary ---
     if kpi_data:
-        story.append(_section_heading("Data Quality Summary"))
-        story.append(Spacer(1, 4 * mm))
-        story.append(_build_kpi_table(kpi_data))
+        story.append(KeepTogether([
+            _section_heading("Data Quality Summary"),
+            Spacer(1, 4 * mm),
+            _build_kpi_table(kpi_data),
+        ]))
         story.append(Spacer(1, 6 * mm))
 
     # --- Yearly Statistics Table ---
@@ -1026,9 +1031,6 @@ def generate_pdf_report(output_path: str,
     selected = stats_result.get("selected_metrics", [])
 
     if yearly:
-        story.append(_section_heading("Yearly Statistics"))
-        story.append(Spacer(1, 4 * mm))
-
         # Filter out non-table metrics
         table_metrics = [m for m in selected
                          if m not in ("monthly_totals", "seasonal_profile",
@@ -1036,21 +1038,31 @@ def generate_pdf_report(output_path: str,
                                       "cumulative_distribution",
                                       "peak_hour_frequency")]
         if table_metrics:
-            story.append(_build_stats_table(yearly, table_metrics))
+            story.append(KeepTogether([
+                _section_heading("Yearly Statistics"),
+                Spacer(1, 4 * mm),
+                _build_stats_table(yearly, table_metrics),
+            ]))
             story.append(Spacer(1, 6 * mm))
 
     # --- Monthly Totals Bar Charts ---
     if "monthly_totals" in selected and yearly:
-        story.append(_section_heading("Monthly Energy Totals"))
-        story.append(Spacer(1, 4 * mm))
-
+        first_chart = True
         for col_name, col_stats in yearly.items():
             monthly = col_stats.get("monthly_totals", {})
             if monthly:
                 chart_bytes = generate_monthly_bar_chart(monthly, col_name)
                 img = RLImage(io.BytesIO(chart_bytes),
                               width=170 * mm, height=70 * mm)
-                story.append(img)
+                if first_chart:
+                    story.append(KeepTogether([
+                        _section_heading("Monthly Energy Totals"),
+                        Spacer(1, 4 * mm),
+                        img,
+                    ]))
+                    first_chart = False
+                else:
+                    story.append(img)
                 story.append(Spacer(1, 4 * mm))
 
     # --- Seasonal Weekly Profiles ---
@@ -1380,12 +1392,20 @@ def generate_pdf_report(output_path: str,
         ]:
             chart_bytes = cs_charts.get(chart_key)
             if chart_bytes:
-                story.append(_section_heading(chart_title))
-                story.append(Spacer(1, 4 * mm))
-                img = RLImage(io.BytesIO(chart_bytes),
-                              width=170 * mm, height=75 * mm)
-                story.append(img)
-                story.append(Spacer(1, 4 * mm))
+                # Pie chart uses square dimensions to avoid distortion
+                if chart_key == "breakdown_pie":
+                    img = RLImage(io.BytesIO(chart_bytes),
+                                  width=120 * mm, height=120 * mm)
+                else:
+                    img = RLImage(io.BytesIO(chart_bytes),
+                                  width=170 * mm, height=75 * mm)
+                story.append(KeepTogether([
+                    _section_heading(chart_title),
+                    Spacer(1, 4 * mm),
+                    img,
+                    Spacer(1, 4 * mm),
+                ]))
+                story.append(Spacer(1, 2 * mm))
 
         # Monthly breakdown table
         cs_monthly = cost_simulation_data.get("monthly", {})
@@ -1444,9 +1464,6 @@ def generate_pdf_report(output_path: str,
         # Comparison table
         cs_comparison = cost_simulation_data.get("comparison", [])
         if cs_comparison:
-            story.append(_section_heading("Scenario Comparison"))
-            story.append(Spacer(1, 4 * mm))
-
             comp_header = ["Scenario", "Total Cost\n(\u20ac)",
                            "Avg\n(\u20ac/kWh)",
                            "Self-Cons\nRate", "Autarky\nRate",
@@ -1484,7 +1501,11 @@ def generate_pdf_report(output_path: str,
                     comp_style.append(
                         ("BACKGROUND", (0, i), (-1, i), _RL_BG))
             comp_table.setStyle(TableStyle(comp_style))
-            story.append(comp_table)
+            story.append(KeepTogether([
+                _section_heading("Scenario Comparison"),
+                Spacer(1, 4 * mm),
+                comp_table,
+            ]))
             story.append(Spacer(1, 6 * mm))
 
     # --- Battery Dimensioning Analysis ---
@@ -1565,8 +1586,6 @@ def generate_pdf_report(output_path: str,
 
         # Economic analysis summary
         sav = battery_data.get("savings", {})
-        story.append(_section_heading("Economic Analysis"))
-        story.append(Spacer(1, 4 * mm))
 
         econ_rows = [
             ["Metric", "Value"],
@@ -1590,7 +1609,11 @@ def generate_pdf_report(output_path: str,
                 econ_style.append(
                     ("BACKGROUND", (0, i), (-1, i), _RL_BG))
         econ_table.setStyle(TableStyle(econ_style))
-        story.append(econ_table)
+        story.append(KeepTogether([
+            _section_heading("Economic Analysis"),
+            Spacer(1, 4 * mm),
+            econ_table,
+        ]))
         story.append(Spacer(1, 6 * mm))
 
         # Charts
@@ -1667,16 +1690,25 @@ def generate_pdf_report(output_path: str,
         # Professional recommendations text
         rec_text = battery_data.get("recommendation_text", "")
         if rec_text:
-            story.append(_section_heading("Professional Recommendation"))
-            story.append(Spacer(1, 4 * mm))
-            # Split text into paragraphs and render
+            # Build all paragraphs first
+            rec_elements = [
+                _section_heading("Professional Recommendation"),
+                Spacer(1, 4 * mm),
+            ]
             for paragraph in rec_text.split("\n\n"):
                 paragraph = paragraph.strip()
                 if paragraph:
-                    # Convert newlines to <br/> for reportlab
                     para_html = paragraph.replace("\n", "<br/>")
-                    story.append(_body_text(para_html))
-                    story.append(Spacer(1, 3 * mm))
+                    rec_elements.append(_body_text(para_html))
+                    rec_elements.append(Spacer(1, 3 * mm))
+            # Keep heading with at least first paragraph
+            if len(rec_elements) > 2:
+                # KeepTogether for heading + first paragraph
+                story.append(KeepTogether(rec_elements[:4]))
+                for el in rec_elements[4:]:
+                    story.append(el)
+            else:
+                story.extend(rec_elements)
 
     # Build PDF with header/footer
     _site_name = site_info.get("site_name") if site_info else None
