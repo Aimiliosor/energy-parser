@@ -3491,7 +3491,7 @@ class EnergyParserGUI:
 
         for title, chart_bytes in charts:
             img = Image.open(io.BytesIO(chart_bytes))
-            display_width = 750
+            display_width = min(620, img.width)
             ratio = display_width / img.width
             display_height = int(img.height * ratio)
             img = img.resize((display_width, display_height),

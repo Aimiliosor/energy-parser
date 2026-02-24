@@ -813,7 +813,7 @@ def generate_cost_breakdown_pie(cost_data: dict) -> bytes:
 
     fig, ax = plt.subplots(figsize=(6, 6), dpi=120)
     wedges, texts, autotexts = ax.pie(
-        values, labels=labels, autopct="%1.1f%%",
+        values, autopct="%1.1f%%",
         colors=pie_colors[:len(values)],
         startangle=90, pctdistance=0.80,
         textprops={"fontsize": 9})
@@ -825,10 +825,13 @@ def generate_cost_breakdown_pie(cost_data: dict) -> bytes:
     ax.set_aspect("equal")
     ax.set_title("Cost Breakdown", fontsize=12, fontweight="bold",
                  color=BRAND_PRIMARY, pad=15)
-    fig.tight_layout(pad=1.5)
+    ax.legend(wedges, labels, loc="lower center",
+              bbox_to_anchor=(0.5, -0.05), ncol=2, fontsize=8,
+              frameon=False)
+    fig.subplots_adjust(bottom=0.15)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.3)
+    fig.savefig(buf, format="png", pad_inches=0.2)
     plt.close(fig)
     buf.seek(0)
     return buf.read()
