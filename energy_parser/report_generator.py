@@ -772,18 +772,199 @@ def _build_kpi_table(kpi_data: dict) -> Table:
     return table
 
 
+def generate_cost_breakdown_pie(cost_data: dict) -> bytes:
+    """Render a cost breakdown pie chart PNG in memory.
+
+    cost_data: dict with keys like 'energy_cost', 'grid_capacity_cost', etc.
+    Returns PNG bytes.
+    """
+    labels = []
+    values = []
+    pie_colors = [
+        BRAND_PRIMARY, BRAND_SECONDARY, "#28A745", "#FFC107",
+        "#6B46C1", "#FF8C00", "#17A2B8",
+    ]
+
+    items = [
+        ("Energy Cost", cost_data.get("energy_cost", 0)),
+        ("Grid Capacity", cost_data.get("grid_capacity_cost", 0)),
+        ("Grid Energy", cost_data.get("grid_energy_cost", 0)),
+        ("Taxes & Levies", cost_data.get("taxes_and_levies", 0)),
+        ("Overshoot Penalties", cost_data.get("overshoot_penalties", 0)),
+        ("Prosumer Tariff", cost_data.get("prosumer_tariff", 0)),
+    ]
+
+    for label, val in items:
+        if val > 0:
+            labels.append(label)
+            values.append(val)
+
+    if not values:
+        # Return empty chart
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=120)
+        ax.text(0.5, 0.5, "No cost data", ha="center", va="center",
+                fontsize=14, color=BRAND_PRIMARY)
+        ax.set_axis_off()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
+    fig, ax = plt.subplots(figsize=(7, 4), dpi=120)
+    wedges, texts, autotexts = ax.pie(
+        values, labels=labels, autopct="%1.1f%%",
+        colors=pie_colors[:len(values)],
+        startangle=90, pctdistance=0.80,
+        textprops={"fontsize": 8})
+
+    for t in autotexts:
+        t.set_fontsize(7)
+        t.set_fontweight("bold")
+
+    ax.set_title("Cost Breakdown", fontsize=12, fontweight="bold",
+                 color=BRAND_PRIMARY, pad=15)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_monthly_cost_bar_chart(monthly_data: dict) -> bytes:
+    """Render a monthly cost bar chart PNG in memory.
+
+    monthly_data: dict of {month_key: CostBreakdown-like dict}
+    Returns PNG bytes.
+    """
+    months = sorted(monthly_data.keys())
+    if not months:
+        fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+        ax.text(0.5, 0.5, "No monthly data", ha="center", va="center")
+        ax.set_axis_off()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
+    energy_costs = [monthly_data[m].get("energy_cost", 0) for m in months]
+    grid_cap = [monthly_data[m].get("grid_capacity_cost", 0) for m in months]
+    grid_en = [monthly_data[m].get("grid_energy_cost", 0) for m in months]
+    taxes = [monthly_data[m].get("taxes_and_levies", 0) for m in months]
+    penalties = [monthly_data[m].get("overshoot_penalties", 0) for m in months]
+
+    x = np.arange(len(months))
+    width = 0.6
+
+    fig, ax = plt.subplots(figsize=(10, 4.5), dpi=120)
+
+    bottom = np.zeros(len(months))
+    bar_data = [
+        ("Energy", energy_costs, BRAND_PRIMARY),
+        ("Grid Capacity", grid_cap, BRAND_SECONDARY),
+        ("Grid Energy", grid_en, "#28A745"),
+        ("Taxes & Levies", taxes, "#FFC107"),
+        ("Penalties", penalties, "#FF8C00"),
+    ]
+
+    for label, vals, color in bar_data:
+        vals_arr = np.array(vals, dtype=float)
+        if vals_arr.sum() > 0:
+            ax.bar(x, vals_arr, width, bottom=bottom, label=label, color=color)
+            bottom += vals_arr
+
+    # Short month labels
+    labels = []
+    for m in months:
+        try:
+            parts = m.split("-")
+            month_idx = int(parts[1]) - 1
+            labels.append(MONTH_NAMES[month_idx])
+        except (IndexError, ValueError):
+            labels.append(m)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=8)
+    ax.set_ylabel("Cost (\u20ac)", fontsize=9)
+    ax.set_title("Monthly Cost Breakdown", fontsize=12,
+                 fontweight="bold", color=BRAND_PRIMARY)
+    ax.legend(loc="upper right", fontsize=7, ncol=3)
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_scenario_comparison_chart(comparison_data: list[dict]) -> bytes:
+    """Render a scenario comparison bar chart PNG in memory.
+
+    comparison_data: list of dicts with 'Scenario' and cost component keys.
+    Returns PNG bytes.
+    """
+    if not comparison_data:
+        fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+        ax.text(0.5, 0.5, "No comparison data", ha="center", va="center")
+        ax.set_axis_off()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
+    scenarios = [d["Scenario"] for d in comparison_data]
+    totals = [d.get("Total Cost (excl. VAT)", 0) for d in comparison_data]
+
+    fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+    colors_list = [BRAND_PRIMARY, BRAND_SECONDARY, "#28A745", "#FFC107"]
+    bars = ax.bar(range(len(scenarios)), totals,
+                  color=colors_list[:len(scenarios)])
+
+    ax.set_xticks(range(len(scenarios)))
+    ax.set_xticklabels(scenarios, fontsize=9)
+    ax.set_ylabel("Total Cost excl. VAT (\u20ac)", fontsize=9)
+    ax.set_title("Scenario Comparison", fontsize=12,
+                 fontweight="bold", color=BRAND_PRIMARY)
+    ax.grid(axis="y", alpha=0.3)
+
+    for bar, val in zip(bars, totals):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                f"\u20ac{val:,.0f}", ha="center", va="bottom", fontsize=8,
+                fontweight="bold")
+
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 def generate_pdf_report(output_path: str,
                          stats_result: dict,
                          kpi_data: dict | None = None,
                          logo_path: str | None = None,
                          quality_report: dict | None = None,
                          site_info: dict | None = None,
-                         battery_data: dict | None = None) -> str:
+                         battery_data: dict | None = None,
+                         cost_simulation_data: dict | None = None) -> str:
     """Generate branded PDF report using reportlab.
 
     Args:
         site_info: Optional dict with "site_name" and "grid_capacity_kw".
         battery_data: Optional dict from BatterySizer.generate_report_data().
+        cost_simulation_data: Optional dict with cost simulation results:
+            - "contract_summary": str, contract description
+            - "summary": dict with CostBreakdown fields
+            - "monthly": dict of {month_key: dict with CostBreakdown fields}
+            - "comparison": list of dicts for scenario comparison (optional)
+            - "charts": dict of chart PNG bytes (optional)
 
     Returns output_path on success.
     """
@@ -1115,6 +1296,196 @@ def generate_pdf_report(output_path: str,
             for line in insights:
                 story.append(_body_text(f"<i>{line}</i>"))
             story.append(Spacer(1, 4 * mm))
+
+    # --- Energy Cost Simulation ---
+    if cost_simulation_data:
+        story.append(PageBreak())
+        story.append(_section_heading("Energy Cost Simulation"))
+        story.append(Spacer(1, 4 * mm))
+
+        # Contract summary
+        contract_summary = cost_simulation_data.get("contract_summary", "")
+        if contract_summary:
+            for line in contract_summary.split("\n"):
+                line = line.strip()
+                if line:
+                    story.append(_body_text(line))
+            story.append(Spacer(1, 4 * mm))
+
+        # Cost summary table
+        cs_summary = cost_simulation_data.get("summary", {})
+        if cs_summary:
+            cs_rows = [
+                ["Metric", "Value"],
+                ["Total Consumption",
+                 f"{cs_summary.get('total_consumption_kwh', 0) / 1000:,.1f} MWh"],
+                ["Total Production",
+                 f"{cs_summary.get('total_production_kwh', 0) / 1000:,.1f} MWh"],
+                ["Self-Consumed",
+                 f"{cs_summary.get('self_consumed_kwh', 0) / 1000:,.1f} MWh"],
+                ["Self-Consumption Rate",
+                 f"{cs_summary.get('self_consumption_rate', 0):.1%}"],
+                ["Autarky Rate",
+                 f"{cs_summary.get('autarky_rate', 0):.1%}"],
+                ["Energy Cost",
+                 f"\u20ac{cs_summary.get('energy_cost', 0):,.2f}"],
+                ["Grid Capacity Cost",
+                 f"\u20ac{cs_summary.get('grid_capacity_cost', 0):,.2f}"],
+                ["Grid Energy Cost",
+                 f"\u20ac{cs_summary.get('grid_energy_cost', 0):,.2f}"],
+                ["Taxes & Levies",
+                 f"\u20ac{cs_summary.get('taxes_and_levies', 0):,.2f}"],
+                ["Overshoot Penalties",
+                 f"\u20ac{cs_summary.get('overshoot_penalties', 0):,.2f}"],
+                ["Injection Revenue",
+                 f"-\u20ac{cs_summary.get('injection_revenue', 0):,.2f}"],
+                ["Total Cost (excl. VAT)",
+                 f"\u20ac{cs_summary.get('total_cost_excl_vat', 0):,.2f}"],
+                ["Average Cost",
+                 f"\u20ac{cs_summary.get('avg_eur_per_kwh', 0):.4f}/kWh"],
+                ["Peak Demand",
+                 f"{cs_summary.get('peak_demand_kw', 0):,.1f} kW"],
+                ["Overshoots",
+                 str(cs_summary.get("overshoots_count", 0))],
+            ]
+
+            cs_table = Table(cs_rows, colWidths=[180, 240])
+            cs_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]
+            for i in range(1, len(cs_rows)):
+                if i % 2 == 0:
+                    cs_style.append(
+                        ("BACKGROUND", (0, i), (-1, i), _RL_BG))
+            cs_table.setStyle(TableStyle(cs_style))
+            story.append(cs_table)
+            story.append(Spacer(1, 6 * mm))
+
+        # Charts
+        cs_charts = cost_simulation_data.get("charts", {})
+        for chart_key, chart_title in [
+            ("breakdown_pie", "Cost Breakdown"),
+            ("monthly_bar", "Monthly Cost Breakdown"),
+            ("scenario_comparison", "Scenario Comparison"),
+        ]:
+            chart_bytes = cs_charts.get(chart_key)
+            if chart_bytes:
+                story.append(_section_heading(chart_title))
+                story.append(Spacer(1, 4 * mm))
+                img = RLImage(io.BytesIO(chart_bytes),
+                              width=170 * mm, height=75 * mm)
+                story.append(img)
+                story.append(Spacer(1, 4 * mm))
+
+        # Monthly breakdown table
+        cs_monthly = cost_simulation_data.get("monthly", {})
+        if cs_monthly:
+            story.append(PageBreak())
+            story.append(_section_heading("Monthly Cost Breakdown"))
+            story.append(Spacer(1, 4 * mm))
+
+            mt_header = ["Month", "Consumption\n(MWh)",
+                         "Grid Cost\n(\u20ac)", "Energy\n(\u20ac)",
+                         "Taxes\n(\u20ac)", "Total\n(\u20ac)",
+                         "Avg\n(\u20ac/kWh)"]
+            mt_rows = [mt_header]
+
+            for month_key in sorted(cs_monthly.keys()):
+                md = cs_monthly[month_key]
+                cons_mwh = md.get("total_consumption_kwh", 0) / 1000
+                total = md.get("total_cost_excl_vat", 0)
+                cons_kwh = md.get("total_consumption_kwh", 1)
+                avg = total / max(cons_kwh, 1)
+                mt_rows.append([
+                    month_key,
+                    f"{cons_mwh:,.1f}",
+                    f"{md.get('grid_capacity_cost', 0) + md.get('grid_energy_cost', 0):,.0f}",
+                    f"{md.get('energy_cost', 0):,.0f}",
+                    f"{md.get('taxes_and_levies', 0):,.0f}",
+                    f"{total:,.0f}",
+                    f"{avg:.4f}",
+                ])
+
+            mt_table = Table(mt_rows,
+                             colWidths=[50, 60, 60, 60, 55, 60, 55])
+            mt_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.5,
+                 colors.HexColor("#D0D5E0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ]
+            for i in range(1, len(mt_rows)):
+                if i % 2 == 0:
+                    mt_style.append(
+                        ("BACKGROUND", (0, i), (-1, i), _RL_BG))
+            mt_table.setStyle(TableStyle(mt_style))
+            story.append(mt_table)
+            story.append(Spacer(1, 6 * mm))
+
+        # Comparison table
+        cs_comparison = cost_simulation_data.get("comparison", [])
+        if cs_comparison:
+            story.append(_section_heading("Scenario Comparison"))
+            story.append(Spacer(1, 4 * mm))
+
+            comp_header = ["Scenario", "Total Cost\n(\u20ac)",
+                           "Avg\n(\u20ac/kWh)",
+                           "Self-Cons\nRate", "Autarky\nRate",
+                           "Peak\n(kW)"]
+            comp_rows = [comp_header]
+            for sc in cs_comparison:
+                comp_rows.append([
+                    sc.get("Scenario", ""),
+                    f"{sc.get('Total Cost (excl. VAT)', 0):,.0f}",
+                    str(sc.get("Avg \u20ac/kWh", "")),
+                    str(sc.get("Self-Consumption Rate", "")),
+                    str(sc.get("Autarky Rate", "")),
+                    f"{sc.get('Peak Demand (kW)', 0):,.0f}",
+                ])
+
+            comp_table = Table(comp_rows,
+                               colWidths=[90, 65, 55, 55, 55, 50])
+            comp_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("GRID", (0, 0), (-1, -1), 0.5,
+                 colors.HexColor("#D0D5E0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ]
+            for i in range(1, len(comp_rows)):
+                if i % 2 == 0:
+                    comp_style.append(
+                        ("BACKGROUND", (0, i), (-1, i), _RL_BG))
+            comp_table.setStyle(TableStyle(comp_style))
+            story.append(comp_table)
+            story.append(Spacer(1, 6 * mm))
 
     # --- Battery Dimensioning Analysis ---
     if battery_data:

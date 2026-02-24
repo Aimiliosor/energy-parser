@@ -1,0 +1,318 @@
+{
+  "contracts": [
+    {
+      "contract_name": "Belgium MV - Standard",
+      "supplier": "Generic BE Supplier",
+      "country": "BE",
+      "voltage_level": "MV",
+      "start_date": null,
+      "end_date": null,
+      "energy": {
+        "price_type": "fixed",
+        "time_periods": [
+          {
+            "name": "Day",
+            "price_eur_per_kwh": 0.085,
+            "grid_energy_eur_per_kwh": 0.025,
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "start_time": "07:00",
+            "end_time": "21:59"
+          },
+          {
+            "name": "Night",
+            "price_eur_per_kwh": 0.065,
+            "grid_energy_eur_per_kwh": 0.015,
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "start_time": "22:00",
+            "end_time": "06:59"
+          },
+          {
+            "name": "Weekend",
+            "price_eur_per_kwh": 0.065,
+            "grid_energy_eur_per_kwh": 0.015,
+            "months": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12
+            ],
+            "days_of_week": [
+              5,
+              6
+            ],
+            "start_time": "00:00",
+            "end_time": "23:59"
+          }
+        ],
+        "index_name": null,
+        "index_base_eur_per_kwh": 0.0,
+        "bloc_price_eur_per_kwh": 0.0,
+        "bloc_volume_kwh": 0.0,
+        "flat_price_eur_per_kwh": 0.0
+      },
+      "grid": {
+        "capacity_charge_eur_per_kw_year": 45.0,
+        "subscribed_power_kw": 500,
+        "connection_power_limit_kw": 630,
+        "flat_grid_energy_eur_per_kwh": 0.0,
+        "time_differentiated": true,
+        "reactive_power_penalty_eur_per_kvarh": 0.0,
+        "cos_phi_threshold": 0.9,
+        "overshoot_penalty_eur_per_kw": 120.0,
+        "overshoot_reference": "subscribed"
+      },
+      "taxes": {
+        "excise_eur_per_kwh": 0.02586,
+        "renewable_levy_eur_per_kwh": 0.005,
+        "other_levies_eur_per_kwh": 0.002,
+        "vat_rate": 0.21,
+        "vat_applicable": false
+      },
+      "production": {
+        "has_production": false,
+        "technology": "",
+        "installed_capacity_kwp": 0.0,
+        "metering_mode": "gross",
+        "injection_tariff_eur_per_kwh": 0.0,
+        "injection_tariff_indexed": false,
+        "avoids_energy_charge": true,
+        "avoids_grid_energy_fee": false,
+        "avoids_excise": false,
+        "avoids_renewable_levy": false,
+        "grid_fee_reduction_pct": 0.0,
+        "green_certificate_value_eur_per_mwh": 0.0,
+        "green_certificate_eligible": false,
+        "prosumer_tariff_eur_per_year": 0.0
+      },
+      "penalties": {
+        "minimum_offtake_kwh_year": 0.0,
+        "minimum_offtake_penalty_eur_per_kwh": 0.0,
+        "demand_overshoot_penalty_eur_per_kw": 0.0
+      },
+      "source": "database",
+      "validated": false,
+      "notes": ""
+    },
+    {
+      "contract_name": "France MV - Tarif Vert (5 periods)",
+      "supplier": "Generic FR Supplier",
+      "country": "FR",
+      "voltage_level": "MV",
+      "start_date": null,
+      "end_date": null,
+      "energy": {
+        "price_type": "fixed",
+        "time_periods": [
+          {
+            "name": "Heures de Pointe (HPH)",
+            "price_eur_per_kwh": 0.2641,
+            "grid_energy_eur_per_kwh": 0.035,
+            "months": [
+              12,
+              1,
+              2
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "start_time": "09:00",
+            "end_time": "10:59"
+          },
+          {
+            "name": "Heures Pleines Hiver (HH)",
+            "price_eur_per_kwh": 0.185,
+            "grid_energy_eur_per_kwh": 0.028,
+            "months": [
+              12,
+              1,
+              2,
+              11,
+              3
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "start_time": "06:00",
+            "end_time": "21:59"
+          },
+          {
+            "name": "Heures Creuses Hiver (HCH)",
+            "price_eur_per_kwh": 0.135,
+            "grid_energy_eur_per_kwh": 0.018,
+            "months": [
+              12,
+              1,
+              2,
+              11,
+              3
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "start_time": "22:00",
+            "end_time": "05:59"
+          },
+          {
+            "name": "Heures Pleines Été (HPE)",
+            "price_eur_per_kwh": 0.128,
+            "grid_energy_eur_per_kwh": 0.022,
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "start_time": "06:00",
+            "end_time": "21:59"
+          },
+          {
+            "name": "Heures Creuses Été (HCE)",
+            "price_eur_per_kwh": 0.0965,
+            "grid_energy_eur_per_kwh": 0.012,
+            "months": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "days_of_week": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "start_time": "22:00",
+            "end_time": "05:59"
+          }
+        ],
+        "index_name": null,
+        "index_base_eur_per_kwh": 0.0,
+        "bloc_price_eur_per_kwh": 0.0,
+        "bloc_volume_kwh": 0.0,
+        "flat_price_eur_per_kwh": 0.0
+      },
+      "grid": {
+        "capacity_charge_eur_per_kw_year": 55.0,
+        "subscribed_power_kw": 400,
+        "connection_power_limit_kw": 500,
+        "flat_grid_energy_eur_per_kwh": 0.0,
+        "time_differentiated": true,
+        "reactive_power_penalty_eur_per_kvarh": 0.0,
+        "cos_phi_threshold": 0.9,
+        "overshoot_penalty_eur_per_kw": 150.0,
+        "overshoot_reference": "subscribed"
+      },
+      "taxes": {
+        "excise_eur_per_kwh": 0.0225,
+        "renewable_levy_eur_per_kwh": 0.0,
+        "other_levies_eur_per_kwh": 0.003,
+        "vat_rate": 0.2,
+        "vat_applicable": false
+      },
+      "production": {
+        "has_production": false,
+        "technology": "",
+        "installed_capacity_kwp": 0.0,
+        "metering_mode": "gross",
+        "injection_tariff_eur_per_kwh": 0.0,
+        "injection_tariff_indexed": false,
+        "avoids_energy_charge": true,
+        "avoids_grid_energy_fee": false,
+        "avoids_excise": false,
+        "avoids_renewable_levy": false,
+        "grid_fee_reduction_pct": 0.0,
+        "green_certificate_value_eur_per_mwh": 0.0,
+        "green_certificate_eligible": false,
+        "prosumer_tariff_eur_per_year": 0.0
+      },
+      "penalties": {
+        "minimum_offtake_kwh_year": 0.0,
+        "minimum_offtake_penalty_eur_per_kwh": 0.0,
+        "demand_overshoot_penalty_eur_per_kw": 0.0
+      },
+      "source": "database",
+      "validated": false,
+      "notes": ""
+    }
+  ]
+}

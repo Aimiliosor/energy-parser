@@ -43,8 +43,20 @@ from energy_parser.report_generator import (
     generate_peak_duration_chart, generate_peak_value_trend_chart,
     generate_histogram_chart, generate_cdf_chart,
     generate_peak_hour_frequency_chart,
+    generate_cost_breakdown_pie, generate_monthly_cost_bar_chart,
+    generate_scenario_comparison_chart,
 )
 from energy_parser.battery_sizing import BatterySizer
+from energy_parser.contract_model import (
+    EnergyContract, EnergyCharges, GridFees, TaxesAndLevies,
+    OnSiteProduction, Penalties, TimePeriod,
+    Country, VoltageLevel, MeteringMode, PriceType,
+    contract_to_dict, contract_from_dict,
+    save_contract_json, load_contract_json,
+    load_contracts_db, save_contracts_db, get_default_db_path,
+)
+from energy_parser.cost_simulator import CostSimulator, CostBreakdown, compare_scenarios
+from energy_parser.exporter import save_cost_simulation_xlsx
 
 
 def resource_path(relative_path):
@@ -203,6 +215,10 @@ class EnergyParserGUI:
         self.kpi_data = None
         self.stats_result = None
         self.battery_result = None
+        self.cost_simulation_result = None  # (detail_df, summary, monthly)
+        self.cost_contract = None           # Current EnergyContract
+        self.cost_scenarios = {}            # {name: EnergyContract} for comparison
+        self.cost_comparison_df = None      # DataFrame from compare_scenarios
 
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
@@ -447,6 +463,7 @@ class EnergyParserGUI:
         self.create_kpi_section()
         self.create_statistics_section()
         self.create_battery_section()
+        self.create_cost_simulation_section()
         self.create_tools_section()
 
         # Initial background update
@@ -1498,6 +1515,88 @@ class EnergyParserGUI:
                 except Exception:
                     pass  # Non-critical
 
+            # Collect cost simulation report data if available
+            cost_sim_report_data = None
+            if self.cost_simulation_result is not None:
+                try:
+                    _, cs_summary, cs_monthly = self.cost_simulation_result
+                    summary_dict = {
+                        "total_consumption_kwh": cs_summary.total_consumption_kwh,
+                        "total_production_kwh": cs_summary.total_production_kwh,
+                        "self_consumed_kwh": cs_summary.self_consumed_kwh,
+                        "grid_consumed_kwh": cs_summary.grid_consumed_kwh,
+                        "injected_kwh": cs_summary.injected_kwh,
+                        "self_consumption_rate": cs_summary.self_consumption_rate,
+                        "autarky_rate": cs_summary.autarky_rate,
+                        "energy_cost": cs_summary.energy_cost,
+                        "grid_capacity_cost": cs_summary.grid_capacity_cost,
+                        "grid_energy_cost": cs_summary.grid_energy_cost,
+                        "taxes_and_levies": cs_summary.taxes_and_levies,
+                        "overshoot_penalties": cs_summary.overshoot_penalties,
+                        "injection_revenue": cs_summary.injection_revenue,
+                        "total_cost_excl_vat": cs_summary.total_cost_excl_vat,
+                        "avg_eur_per_kwh": (
+                            cs_summary.total_cost_excl_vat
+                            / max(cs_summary.total_consumption_kwh, 1)),
+                        "peak_demand_kw": cs_summary.peak_demand_kw,
+                        "overshoots_count": cs_summary.overshoots_count,
+                        "prosumer_tariff": cs_summary.prosumer_tariff,
+                    }
+
+                    monthly_dict = {}
+                    for mk, mb in cs_monthly.items():
+                        monthly_dict[mk] = {
+                            "total_consumption_kwh": mb.total_consumption_kwh,
+                            "total_production_kwh": mb.total_production_kwh,
+                            "self_consumption_rate": mb.self_consumption_rate,
+                            "energy_cost": mb.energy_cost,
+                            "grid_capacity_cost": mb.grid_capacity_cost,
+                            "grid_energy_cost": mb.grid_energy_cost,
+                            "taxes_and_levies": mb.taxes_and_levies,
+                            "overshoot_penalties": mb.overshoot_penalties,
+                            "total_cost_excl_vat": mb.total_cost_excl_vat,
+                            "peak_demand_kw": mb.peak_demand_kw,
+                        }
+
+                    # Generate charts
+                    pie_chart = generate_cost_breakdown_pie(summary_dict)
+                    monthly_bar = generate_monthly_cost_bar_chart({
+                        k: {
+                            "energy_cost": v["energy_cost"],
+                            "grid_capacity_cost": v["grid_capacity_cost"],
+                            "grid_energy_cost": v["grid_energy_cost"],
+                            "taxes_and_levies": v["taxes_and_levies"],
+                            "overshoot_penalties": v["overshoot_penalties"],
+                        } for k, v in monthly_dict.items()
+                    })
+
+                    charts = {
+                        "breakdown_pie": pie_chart,
+                        "monthly_bar": monthly_bar,
+                    }
+
+                    # Add scenario comparison chart if available
+                    if self.cost_comparison_df is not None:
+                        comp_data = self.cost_comparison_df.to_dict("records")
+                        charts["scenario_comparison"] = (
+                            generate_scenario_comparison_chart(comp_data))
+
+                    contract_summary = ""
+                    if self.cost_contract:
+                        contract_summary = self.cost_contract.summary()
+
+                    cost_sim_report_data = {
+                        "contract_summary": contract_summary,
+                        "summary": summary_dict,
+                        "monthly": monthly_dict,
+                        "charts": charts,
+                        "comparison": (
+                            self.cost_comparison_df.to_dict("records")
+                            if self.cost_comparison_df is not None else []),
+                    }
+                except Exception:
+                    pass  # Non-critical
+
             result_path = generate_pdf_report(
                 output_path=save_path,
                 stats_result=self.stats_result,
@@ -1506,6 +1605,7 @@ class EnergyParserGUI:
                 quality_report=self.quality_report,
                 site_info=site_info,
                 battery_data=battery_report_data,
+                cost_simulation_data=cost_sim_report_data,
             )
 
             self.update_progress(100, "PDF report generated!")
@@ -1808,9 +1908,1328 @@ class EnergyParserGUI:
             messagebox.showerror("Error",
                                  f"Chart generation failed:\n{str(e)}")
 
+    # ============ Cost Simulation Section ============
+
+    def create_cost_simulation_section(self):
+        """Create the energy cost simulation section."""
+        content = self.create_card(self.content_frame,
+                                   "10. Energy Cost Simulation")
+
+        # --- Contract Input Method Selection ---
+        method_frame = tk.Frame(content, bg=COLORS["white"])
+        method_frame.pack(fill=tk.X, pady=(0, 5))
+
+        tk.Label(method_frame, text="Contract Input Method:",
+                 font=("Segoe UI", 10, "bold"),
+                 bg=COLORS["white"], fg=COLORS["primary"]).pack(
+                     anchor=tk.W, pady=(0, 5))
+
+        self.contract_method_var = tk.StringVar(value="database")
+        methods = [
+            ("database", "Load from Contract Database"),
+            ("manual", "Manual Input"),
+            ("import", "Import from CSV/Excel/JSON"),
+        ]
+        method_radio_frame = tk.Frame(method_frame, bg=COLORS["white"])
+        method_radio_frame.pack(fill=tk.X)
+        for val, label in methods:
+            tk.Radiobutton(method_radio_frame, text=label,
+                           variable=self.contract_method_var, value=val,
+                           font=("Segoe UI", 9), bg=COLORS["white"],
+                           fg=COLORS["text_dark"],
+                           activebackground=COLORS["white"],
+                           selectcolor=COLORS["white"],
+                           command=self._switch_contract_method).pack(
+                               side=tk.LEFT, padx=10)
+
+        # --- Contract Database Panel ---
+        self.contract_db_frame = tk.Frame(content, bg=COLORS["white"])
+        self.contract_db_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        db_row1 = tk.Frame(self.contract_db_frame, bg=COLORS["white"])
+        db_row1.pack(fill=tk.X, pady=2)
+
+        tk.Label(db_row1, text="Country:", font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT, padx=(0, 5))
+        self.db_country_var = tk.StringVar()
+        self.db_country_combo = ttk.Combobox(
+            db_row1, textvariable=self.db_country_var,
+            width=15, state="readonly", font=("Segoe UI", 9))
+        self.db_country_combo.pack(side=tk.LEFT, padx=5)
+        self.db_country_combo.bind("<<ComboboxSelected>>",
+                                    self._on_db_country_changed)
+
+        tk.Label(db_row1, text="Supplier:", font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT, padx=(15, 5))
+        self.db_supplier_var = tk.StringVar()
+        self.db_supplier_combo = ttk.Combobox(
+            db_row1, textvariable=self.db_supplier_var,
+            width=25, state="readonly", font=("Segoe UI", 9))
+        self.db_supplier_combo.pack(side=tk.LEFT, padx=5)
+        self.db_supplier_combo.bind("<<ComboboxSelected>>",
+                                     self._on_db_supplier_changed)
+
+        tk.Label(db_row1, text="Contract:", font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT, padx=(15, 5))
+        self.db_contract_var = tk.StringVar()
+        self.db_contract_combo = ttk.Combobox(
+            db_row1, textvariable=self.db_contract_var,
+            width=30, state="readonly", font=("Segoe UI", 9))
+        self.db_contract_combo.pack(side=tk.LEFT, padx=5)
+
+        db_btn_row = tk.Frame(self.contract_db_frame, bg=COLORS["white"])
+        db_btn_row.pack(fill=tk.X, pady=5)
+
+        self.db_load_btn = ModernButton(
+            db_btn_row, "Load Contract",
+            command=self._load_contract_from_db,
+            bg=COLORS["primary"], width=140, height=35)
+        self.db_load_btn.pack(side=tk.LEFT, padx=5)
+
+        self.db_clone_btn = ModernButton(
+            db_btn_row, "Clone & Modify",
+            command=self._clone_contract_from_db,
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=140, height=35)
+        self.db_clone_btn.pack(side=tk.LEFT, padx=5)
+
+        # Load the DB
+        self._contracts_db = {}
+        self._load_contracts_db()
+
+        # --- Import Panel ---
+        self.contract_import_frame = tk.Frame(content, bg=COLORS["white"])
+
+        import_row = tk.Frame(self.contract_import_frame, bg=COLORS["white"])
+        import_row.pack(fill=tk.X, pady=5)
+
+        self.import_contract_btn = ModernButton(
+            import_row, "Import Contract File",
+            command=self._import_contract_file,
+            bg=COLORS["primary"], width=170, height=35)
+        self.import_contract_btn.pack(side=tk.LEFT, padx=5)
+
+        self.download_template_btn = ModernButton(
+            import_row, "Download CSV Template",
+            command=self._download_contract_template,
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=180, height=35)
+        self.download_template_btn.pack(side=tk.LEFT, padx=5)
+
+        # --- Manual Input Panel ---
+        self.contract_manual_frame = tk.Frame(content, bg=COLORS["white"])
+        self._create_manual_contract_form()
+
+        # --- Contract Summary Display ---
+        self.contract_summary_frame = tk.Frame(content, bg=COLORS["white"])
+        self.contract_summary_frame.pack(fill=tk.X, pady=5)
+
+        self.contract_summary_text = tk.Text(
+            self.contract_summary_frame, height=6, width=100,
+            font=("Consolas", 9), bg=COLORS["bg"],
+            fg=COLORS["text_dark"], relief=tk.FLAT, padx=10, pady=10)
+        self.contract_summary_text.pack(fill=tk.X)
+        self.contract_summary_text.config(state=tk.DISABLED)
+
+        # --- Simulation Buttons ---
+        sim_btn_row = tk.Frame(content, bg=COLORS["white"])
+        sim_btn_row.pack(fill=tk.X, pady=10)
+
+        self.simulate_btn = ModernButton(
+            sim_btn_row, "Simulate Costs",
+            command=self.run_cost_simulation,
+            bg=COLORS["secondary"], width=160, height=40)
+        self.simulate_btn.pack(side=tk.LEFT, padx=5)
+
+        self.add_scenario_btn = ModernButton(
+            sim_btn_row, "Add as Scenario",
+            command=self._add_scenario,
+            bg=COLORS["primary"], width=150, height=40)
+        self.add_scenario_btn.pack(side=tk.LEFT, padx=5)
+
+        self.compare_btn = ModernButton(
+            sim_btn_row, "Compare Scenarios",
+            command=self._run_scenario_comparison,
+            bg=COLORS["primary"], width=160, height=40)
+        self.compare_btn.pack(side=tk.LEFT, padx=5)
+
+        self.export_contract_btn = ModernButton(
+            sim_btn_row, "Export Contract JSON",
+            command=self._export_contract_json,
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=160, height=40)
+        self.export_contract_btn.pack(side=tk.LEFT, padx=5)
+
+        self.export_cost_xlsx_btn = ModernButton(
+            sim_btn_row, "Export Cost Excel",
+            command=self._export_cost_xlsx,
+            bg=COLORS["success"], width=150, height=40)
+        self.export_cost_xlsx_btn.pack(side=tk.LEFT, padx=5)
+
+        # Scenario list label
+        self.scenario_label = tk.Label(
+            content, text="Scenarios: (none)",
+            font=("Segoe UI", 9), bg=COLORS["white"],
+            fg=COLORS["text_dark"])
+        self.scenario_label.pack(anchor=tk.W, pady=2)
+
+        # --- Results Frame ---
+        self.cost_results_frame = tk.Frame(content, bg=COLORS["white"])
+        self.cost_results_frame.pack(fill=tk.X, pady=5)
+
+        # Chart display frame for cost simulation
+        self.cost_chart_frame = tk.Frame(content, bg=COLORS["white"])
+        self.cost_chart_frame.pack(fill=tk.X, pady=5)
+        self._cost_chart_images = []
+
+        # Battery link
+        self.battery_link_frame = tk.Frame(content, bg=COLORS["white"])
+        self.battery_link_frame.pack(fill=tk.X, pady=5)
+
+    def _create_manual_contract_form(self):
+        """Build the manual contract input form."""
+        parent = self.contract_manual_frame
+
+        # Use a canvas with scrollbar for the long form
+        form_canvas = tk.Canvas(parent, bg=COLORS["white"],
+                                 highlightthickness=0, height=350)
+        form_scrollbar = ttk.Scrollbar(parent, orient="vertical",
+                                        command=form_canvas.yview)
+        self.contract_form_inner = tk.Frame(form_canvas, bg=COLORS["white"])
+
+        self.contract_form_inner.bind(
+            "<Configure>",
+            lambda e: form_canvas.configure(
+                scrollregion=form_canvas.bbox("all")))
+        form_canvas.create_window((0, 0), window=self.contract_form_inner,
+                                   anchor="nw")
+        form_canvas.configure(yscrollcommand=form_scrollbar.set)
+
+        form_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        form_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        form = self.contract_form_inner
+
+        # Store all form variables
+        self._cf = {}  # contract form variables
+
+        # --- General ---
+        self._add_form_section(form, "GENERAL")
+        self._cf["contract_name"] = self._add_form_field(
+            form, "Contract Name:", "")
+        self._cf["supplier"] = self._add_form_field(
+            form, "Supplier:", "")
+
+        country_frame = tk.Frame(form, bg=COLORS["white"])
+        country_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(country_frame, text="Country:", width=22, anchor=tk.W,
+                 font=("Segoe UI", 9), bg=COLORS["white"]).pack(
+                     side=tk.LEFT)
+        self._cf["country"] = tk.StringVar(value="BE")
+        ttk.Combobox(country_frame, textvariable=self._cf["country"],
+                     values=["BE", "FR", "NL", "DE"],
+                     width=10, state="readonly",
+                     font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+
+        vl_frame = tk.Frame(form, bg=COLORS["white"])
+        vl_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(vl_frame, text="Voltage Level:", width=22, anchor=tk.W,
+                 font=("Segoe UI", 9), bg=COLORS["white"]).pack(
+                     side=tk.LEFT)
+        self._cf["voltage_level"] = tk.StringVar(value="LV")
+        ttk.Combobox(vl_frame, textvariable=self._cf["voltage_level"],
+                     values=["LV", "MV", "HV"],
+                     width=10, state="readonly",
+                     font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+
+        # --- Energy Charges ---
+        self._add_form_section(form, "ENERGY CHARGES")
+
+        pt_frame = tk.Frame(form, bg=COLORS["white"])
+        pt_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(pt_frame, text="Price Type:", width=22, anchor=tk.W,
+                 font=("Segoe UI", 9), bg=COLORS["white"]).pack(
+                     side=tk.LEFT)
+        self._cf["price_type"] = tk.StringVar(value="fixed")
+        ttk.Combobox(pt_frame, textvariable=self._cf["price_type"],
+                     values=["fixed", "indexed", "spot", "bloc_spot"],
+                     width=12, state="readonly",
+                     font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+
+        self._cf["flat_price"] = self._add_form_field(
+            form, "Flat Energy Price (\u20ac/kWh):", "0.10",
+            tooltip="Used when no time-of-use periods are defined")
+
+        # Time-of-use periods
+        self._add_form_section(form, "TIME-OF-USE PERIODS")
+        tk.Label(form, text="Define up to 5 periods (leave blank to skip):",
+                 font=("Segoe UI", 8, "italic"),
+                 bg=COLORS["white"], fg=COLORS["light_gray"]).pack(
+                     anchor=tk.W, padx=10)
+
+        self._cf["periods"] = []
+        for i in range(5):
+            pf = tk.Frame(form, bg=COLORS["bg"], relief=tk.FLAT, bd=1)
+            pf.pack(fill=tk.X, padx=10, pady=3)
+
+            pv = {}
+            row1 = tk.Frame(pf, bg=COLORS["bg"])
+            row1.pack(fill=tk.X, padx=5, pady=2)
+            tk.Label(row1, text=f"Period {i+1}:", font=("Segoe UI", 8, "bold"),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT)
+            tk.Label(row1, text="Name:", font=("Segoe UI", 8),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(10, 2))
+            pv["name"] = tk.StringVar()
+            ttk.Entry(row1, textvariable=pv["name"], width=16,
+                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+            tk.Label(row1, text="Price(\u20ac/kWh):", font=("Segoe UI", 8),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+            pv["price"] = tk.StringVar()
+            ttk.Entry(row1, textvariable=pv["price"], width=8,
+                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+            tk.Label(row1, text="Grid(\u20ac/kWh):", font=("Segoe UI", 8),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+            pv["grid_price"] = tk.StringVar()
+            ttk.Entry(row1, textvariable=pv["grid_price"], width=8,
+                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+
+            row2 = tk.Frame(pf, bg=COLORS["bg"])
+            row2.pack(fill=tk.X, padx=5, pady=2)
+            tk.Label(row2, text="Hours:", font=("Segoe UI", 8),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT)
+            pv["start_h"] = tk.StringVar(value="0")
+            ttk.Entry(row2, textvariable=pv["start_h"], width=4,
+                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+            tk.Label(row2, text="-", font=("Segoe UI", 8),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT)
+            pv["end_h"] = tk.StringVar(value="23")
+            ttk.Entry(row2, textvariable=pv["end_h"], width=4,
+                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+            tk.Label(row2, text="Days(0=Mon,6=Sun):", font=("Segoe UI", 8),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+            pv["days"] = tk.StringVar(value="0,1,2,3,4,5,6")
+            ttk.Entry(row2, textvariable=pv["days"], width=16,
+                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+            tk.Label(row2, text="Months(1-12):", font=("Segoe UI", 8),
+                     bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
+            pv["months"] = tk.StringVar(value="1,2,3,4,5,6,7,8,9,10,11,12")
+            ttk.Entry(row2, textvariable=pv["months"], width=24,
+                      font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+
+            self._cf["periods"].append(pv)
+
+        # --- Grid Fees ---
+        self._add_form_section(form, "GRID / NETWORK FEES")
+        self._cf["capacity_charge"] = self._add_form_field(
+            form, "Capacity Charge (\u20ac/kW/year):", "0",
+            tooltip="Annual fee per kW of subscribed power")
+        self._cf["subscribed_power"] = self._add_form_field(
+            form, "Subscribed Power (kW):", "0")
+        self._cf["connection_limit"] = self._add_form_field(
+            form, "Connection Limit (kW):", "0")
+        self._cf["flat_grid_energy"] = self._add_form_field(
+            form, "Flat Grid Energy (\u20ac/kWh):", "0",
+            tooltip="Used if grid fees are NOT time-differentiated")
+
+        td_frame = tk.Frame(form, bg=COLORS["white"])
+        td_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(td_frame, text="Time-differentiated grid fees:",
+                 width=22, anchor=tk.W, font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT)
+        self._cf["time_diff"] = tk.BooleanVar(value=False)
+        tk.Checkbutton(td_frame, variable=self._cf["time_diff"],
+                       bg=COLORS["white"], selectcolor=COLORS["white"]
+                       ).pack(side=tk.LEFT)
+
+        self._cf["overshoot_penalty"] = self._add_form_field(
+            form, "Overshoot Penalty (\u20ac/kW):", "0",
+            tooltip="Per kW exceeding subscribed power")
+
+        # --- Taxes ---
+        self._add_form_section(form, "TAXES & LEVIES")
+        self._cf["excise"] = self._add_form_field(
+            form, "Excise (\u20ac/kWh):", "0",
+            tooltip="Accijnzen (BE) / TICFE (FR)")
+        self._cf["renewable_levy"] = self._add_form_field(
+            form, "Renewable Levy (\u20ac/kWh):", "0")
+        self._cf["other_levies"] = self._add_form_field(
+            form, "Other Levies (\u20ac/kWh):", "0")
+        self._cf["vat_rate"] = self._add_form_field(
+            form, "VAT Rate (decimal):", "0.21")
+
+        vat_frame = tk.Frame(form, bg=COLORS["white"])
+        vat_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(vat_frame, text="VAT Applicable:", width=22,
+                 anchor=tk.W, font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT)
+        self._cf["vat_applicable"] = tk.BooleanVar(value=True)
+        tk.Checkbutton(vat_frame, variable=self._cf["vat_applicable"],
+                       bg=COLORS["white"], selectcolor=COLORS["white"]
+                       ).pack(side=tk.LEFT)
+
+        # --- Production ---
+        self._add_form_section(form, "ON-SITE PRODUCTION")
+
+        prod_enable_frame = tk.Frame(form, bg=COLORS["white"])
+        prod_enable_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(prod_enable_frame, text="Has Production:", width=22,
+                 anchor=tk.W, font=("Segoe UI", 9),
+                 bg=COLORS["white"]).pack(side=tk.LEFT)
+        self._cf["has_production"] = tk.BooleanVar(value=False)
+        tk.Checkbutton(prod_enable_frame,
+                       variable=self._cf["has_production"],
+                       bg=COLORS["white"], selectcolor=COLORS["white"]
+                       ).pack(side=tk.LEFT)
+
+        self._cf["technology"] = self._add_form_field(
+            form, "Technology:", "PV")
+        self._cf["installed_capacity"] = self._add_form_field(
+            form, "Installed Capacity (kWp):", "0")
+        self._cf["injection_tariff"] = self._add_form_field(
+            form, "Injection Tariff (\u20ac/kWh):", "0",
+            tooltip="Revenue per kWh injected into the grid")
+
+        mm_frame = tk.Frame(form, bg=COLORS["white"])
+        mm_frame.pack(fill=tk.X, pady=2, padx=10)
+        tk.Label(mm_frame, text="Metering Mode:", width=22, anchor=tk.W,
+                 font=("Segoe UI", 9), bg=COLORS["white"]).pack(
+                     side=tk.LEFT)
+        self._cf["metering_mode"] = tk.StringVar(value="gross")
+        ttk.Combobox(mm_frame, textvariable=self._cf["metering_mode"],
+                     values=["gross", "net", "semi_net"],
+                     width=12, state="readonly",
+                     font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+
+        # Avoidance checkboxes
+        for key, label in [
+            ("avoids_energy", "Self-consumption avoids energy charge"),
+            ("avoids_grid_fee", "Self-consumption avoids grid energy fee"),
+            ("avoids_excise", "Self-consumption avoids excise"),
+            ("gc_eligible", "Green certificate eligible"),
+        ]:
+            cf = tk.Frame(form, bg=COLORS["white"])
+            cf.pack(fill=tk.X, pady=1, padx=10)
+            self._cf[key] = tk.BooleanVar(
+                value=(key == "avoids_energy"))
+            tk.Checkbutton(cf, text=label, variable=self._cf[key],
+                           font=("Segoe UI", 8), bg=COLORS["white"],
+                           selectcolor=COLORS["white"]).pack(
+                               anchor=tk.W)
+
+        self._cf["gc_value"] = self._add_form_field(
+            form, "Green Cert. Value (\u20ac/MWh):", "0")
+
+        # --- Penalties ---
+        self._add_form_section(form, "PENALTIES")
+        self._cf["min_offtake"] = self._add_form_field(
+            form, "Min. Offtake (kWh/year):", "0")
+        self._cf["min_offtake_penalty"] = self._add_form_field(
+            form, "Min. Offtake Penalty (\u20ac/kWh):", "0")
+
+        # Apply button
+        apply_btn = ModernButton(
+            form, "Apply Manual Contract",
+            command=self._apply_manual_contract,
+            bg=COLORS["secondary"], width=200, height=35)
+        apply_btn.pack(pady=10)
+
+    def _add_form_section(self, parent, title):
+        """Add a section header to the form."""
+        bar = tk.Frame(parent, bg=COLORS["primary"])
+        bar.pack(fill=tk.X, pady=(8, 3), padx=5)
+        tk.Label(bar, text=title, font=("Segoe UI", 9, "bold"),
+                 bg=COLORS["primary"], fg=COLORS["white"],
+                 padx=8, pady=3).pack(side=tk.LEFT)
+
+    def _add_form_field(self, parent, label, default="", tooltip=None):
+        """Add a label+entry field to the form. Returns the StringVar."""
+        row = tk.Frame(parent, bg=COLORS["white"])
+        row.pack(fill=tk.X, pady=2, padx=10)
+        lbl = tk.Label(row, text=label, width=22, anchor=tk.W,
+                       font=("Segoe UI", 9), bg=COLORS["white"])
+        lbl.pack(side=tk.LEFT)
+        var = tk.StringVar(value=default)
+        ttk.Entry(row, textvariable=var, width=20,
+                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+        if tooltip:
+            tip_lbl = tk.Label(row, text=tooltip, font=("Segoe UI", 7, "italic"),
+                               bg=COLORS["white"], fg=COLORS["light_gray"])
+            tip_lbl.pack(side=tk.LEFT, padx=5)
+        return var
+
+    def _switch_contract_method(self):
+        """Show/hide panels based on selected contract input method."""
+        method = self.contract_method_var.get()
+        # Hide all
+        self.contract_db_frame.pack_forget()
+        self.contract_import_frame.pack_forget()
+        self.contract_manual_frame.pack_forget()
+
+        if method == "database":
+            self.contract_db_frame.pack(fill=tk.X, padx=10, pady=5,
+                                         after=self.contract_db_frame.master.winfo_children()[1])
+        elif method == "import":
+            self.contract_import_frame.pack(fill=tk.X, padx=10, pady=5,
+                                             after=self.contract_db_frame.master.winfo_children()[1])
+        elif method == "manual":
+            self.contract_manual_frame.pack(fill=tk.X, padx=10, pady=5,
+                                             after=self.contract_db_frame.master.winfo_children()[1])
+
+    # --- Contract Database Methods ---
+
+    def _load_contracts_db(self):
+        """Load the contracts database from JSON."""
+        db_path = get_default_db_path()
+        if os.path.exists(db_path):
+            try:
+                self._contracts_db = load_contracts_db(db_path)
+                countries = list(self._contracts_db.keys())
+                self.db_country_combo["values"] = countries
+                if countries:
+                    self.db_country_combo.set(countries[0])
+                    self._on_db_country_changed(None)
+            except Exception as e:
+                self._contracts_db = {}
+
+    def _on_db_country_changed(self, event):
+        """Update supplier list when country changes."""
+        country = self.db_country_var.get()
+        suppliers = list(self._contracts_db.get(country, {}).keys())
+        self.db_supplier_combo["values"] = suppliers
+        if suppliers:
+            self.db_supplier_combo.set(suppliers[0])
+            self._on_db_supplier_changed(None)
+        else:
+            self.db_supplier_combo.set("")
+            self.db_contract_combo["values"] = []
+            self.db_contract_combo.set("")
+
+    def _on_db_supplier_changed(self, event):
+        """Update contract list when supplier changes."""
+        country = self.db_country_var.get()
+        supplier = self.db_supplier_var.get()
+        contracts = list(
+            self._contracts_db.get(country, {}).get(supplier, {}).keys())
+        self.db_contract_combo["values"] = contracts
+        if contracts:
+            self.db_contract_combo.set(contracts[0])
+        else:
+            self.db_contract_combo.set("")
+
+    def _load_contract_from_db(self):
+        """Load selected contract from database."""
+        country = self.db_country_var.get()
+        supplier = self.db_supplier_var.get()
+        name = self.db_contract_var.get()
+        if not name:
+            messagebox.showwarning("Warning",
+                                   "Please select a contract.")
+            return
+        contract = (self._contracts_db.get(country, {})
+                    .get(supplier, {}).get(name))
+        if contract:
+            self._set_active_contract(contract)
+
+    def _clone_contract_from_db(self):
+        """Clone a database contract and switch to manual editing."""
+        country = self.db_country_var.get()
+        supplier = self.db_supplier_var.get()
+        name = self.db_contract_var.get()
+        if not name:
+            messagebox.showwarning("Warning",
+                                   "Please select a contract to clone.")
+            return
+        contract = (self._contracts_db.get(country, {})
+                    .get(supplier, {}).get(name))
+        if contract:
+            self._populate_manual_form(contract)
+            self.contract_method_var.set("manual")
+            self._switch_contract_method()
+            messagebox.showinfo(
+                "Contract Cloned",
+                f"Contract '{name}' loaded into manual form.\n"
+                "Modify values and click 'Apply Manual Contract'.")
+
+    # --- Contract Import Methods ---
+
+    def _import_contract_file(self):
+        """Import a contract from CSV, Excel, or JSON file."""
+        filetypes = [
+            ("All supported", "*.json;*.csv;*.xlsx"),
+            ("JSON files", "*.json"),
+            ("CSV files", "*.csv"),
+            ("Excel files", "*.xlsx"),
+        ]
+        path = filedialog.askopenfilename(filetypes=filetypes)
+        if not path:
+            return
+
+        try:
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".json":
+                contract = load_contract_json(path)
+                self._set_active_contract(contract)
+                messagebox.showinfo("Success",
+                                    f"Contract loaded from {os.path.basename(path)}")
+            elif ext in (".csv", ".xlsx"):
+                self._import_contract_from_table(path, ext)
+        except Exception as e:
+            messagebox.showerror("Import Error",
+                                 f"Failed to import contract:\n{str(e)}")
+
+    def _import_contract_from_table(self, path, ext):
+        """Import contract from a CSV/Excel with key-value pairs."""
+        if ext == ".csv":
+            df = pd.read_csv(path, header=None)
+        else:
+            df = pd.read_excel(path, header=None)
+
+        # Expect two columns: field_name, value
+        if len(df.columns) < 2:
+            messagebox.showerror("Format Error",
+                                 "File must have at least 2 columns: "
+                                 "field name and value.")
+            return
+
+        data = {}
+        for _, row in df.iterrows():
+            key = str(row.iloc[0]).strip().lower().replace(" ", "_")
+            val = row.iloc[1]
+            data[key] = val
+
+        # Map flat keys to nested contract dict
+        contract_dict = self._flat_to_contract_dict(data)
+        contract = contract_from_dict(contract_dict)
+        contract.source = "csv_import"
+        self._set_active_contract(contract)
+        messagebox.showinfo("Success",
+                            f"Contract imported from {os.path.basename(path)}")
+
+    def _flat_to_contract_dict(self, data: dict) -> dict:
+        """Convert flat key-value pairs to nested contract dict."""
+        def _get(key, default=0.0):
+            val = data.get(key, default)
+            if isinstance(val, str):
+                try:
+                    return float(val)
+                except ValueError:
+                    return val
+            return val
+
+        return {
+            "contract_name": str(data.get("contract_name", "")),
+            "supplier": str(data.get("supplier", "")),
+            "country": str(data.get("country", "BE")),
+            "voltage_level": str(data.get("voltage_level", "LV")),
+            "energy": {
+                "price_type": str(data.get("price_type", "fixed")),
+                "flat_price_eur_per_kwh": _get("flat_price_eur_per_kwh", 0.10),
+                "time_periods": [],
+            },
+            "grid": {
+                "capacity_charge_eur_per_kw_year": _get(
+                    "capacity_charge_eur_per_kw_year"),
+                "subscribed_power_kw": _get("subscribed_power_kw"),
+                "connection_power_limit_kw": _get("connection_power_limit_kw"),
+                "flat_grid_energy_eur_per_kwh": _get(
+                    "flat_grid_energy_eur_per_kwh"),
+                "overshoot_penalty_eur_per_kw": _get(
+                    "overshoot_penalty_eur_per_kw"),
+            },
+            "taxes": {
+                "excise_eur_per_kwh": _get("excise_eur_per_kwh"),
+                "renewable_levy_eur_per_kwh": _get("renewable_levy_eur_per_kwh"),
+                "other_levies_eur_per_kwh": _get("other_levies_eur_per_kwh"),
+                "vat_rate": _get("vat_rate", 0.21),
+                "vat_applicable": str(data.get(
+                    "vat_applicable", "true")).lower() == "true",
+            },
+            "production": {
+                "has_production": str(data.get(
+                    "has_production", "false")).lower() == "true",
+                "injection_tariff_eur_per_kwh": _get(
+                    "injection_tariff_eur_per_kwh"),
+            },
+            "penalties": {},
+        }
+
+    def _download_contract_template(self):
+        """Save a CSV template for contract import."""
+        save_path = filedialog.asksaveasfilename(
+            initialfile="contract_template.csv",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")])
+        if not save_path:
+            return
+
+        fields = [
+            ("contract_name", "My Contract"),
+            ("supplier", "Supplier Name"),
+            ("country", "BE"),
+            ("voltage_level", "LV"),
+            ("price_type", "fixed"),
+            ("flat_price_eur_per_kwh", "0.10"),
+            ("capacity_charge_eur_per_kw_year", "0"),
+            ("subscribed_power_kw", "0"),
+            ("connection_power_limit_kw", "0"),
+            ("flat_grid_energy_eur_per_kwh", "0"),
+            ("overshoot_penalty_eur_per_kw", "0"),
+            ("excise_eur_per_kwh", "0"),
+            ("renewable_levy_eur_per_kwh", "0"),
+            ("other_levies_eur_per_kwh", "0"),
+            ("vat_rate", "0.21"),
+            ("vat_applicable", "true"),
+            ("has_production", "false"),
+            ("injection_tariff_eur_per_kwh", "0"),
+        ]
+        df = pd.DataFrame(fields, columns=["Field", "Value"])
+        df.to_csv(save_path, index=False)
+        messagebox.showinfo("Template Saved",
+                            f"Contract template saved to:\n{save_path}")
+
+    # --- Manual Contract Methods ---
+
+    def _populate_manual_form(self, contract: EnergyContract):
+        """Populate the manual form from an EnergyContract."""
+        cf = self._cf
+        cf["contract_name"].set(contract.contract_name)
+        cf["supplier"].set(contract.supplier)
+        cf["country"].set(contract.country.value)
+        cf["voltage_level"].set(contract.voltage_level.value)
+        cf["price_type"].set(contract.energy.price_type.value)
+        cf["flat_price"].set(str(contract.energy.flat_price_eur_per_kwh))
+
+        # Time periods
+        for i, pv in enumerate(cf["periods"]):
+            if i < len(contract.energy.time_periods):
+                tp = contract.energy.time_periods[i]
+                pv["name"].set(tp.name)
+                pv["price"].set(str(tp.price_eur_per_kwh))
+                pv["grid_price"].set(str(tp.grid_energy_eur_per_kwh))
+                pv["start_h"].set(str(tp.start_time.hour))
+                pv["end_h"].set(str(tp.end_time.hour))
+                pv["days"].set(",".join(str(d) for d in tp.days_of_week))
+                pv["months"].set(",".join(str(m) for m in tp.months))
+            else:
+                pv["name"].set("")
+                pv["price"].set("")
+                pv["grid_price"].set("")
+
+        # Grid fees
+        cf["capacity_charge"].set(
+            str(contract.grid.capacity_charge_eur_per_kw_year))
+        cf["subscribed_power"].set(
+            str(contract.grid.subscribed_power_kw))
+        cf["connection_limit"].set(
+            str(contract.grid.connection_power_limit_kw))
+        cf["flat_grid_energy"].set(
+            str(contract.grid.flat_grid_energy_eur_per_kwh))
+        cf["time_diff"].set(contract.grid.time_differentiated)
+        cf["overshoot_penalty"].set(
+            str(contract.grid.overshoot_penalty_eur_per_kw))
+
+        # Taxes
+        cf["excise"].set(str(contract.taxes.excise_eur_per_kwh))
+        cf["renewable_levy"].set(
+            str(contract.taxes.renewable_levy_eur_per_kwh))
+        cf["other_levies"].set(
+            str(contract.taxes.other_levies_eur_per_kwh))
+        cf["vat_rate"].set(str(contract.taxes.vat_rate))
+        cf["vat_applicable"].set(contract.taxes.vat_applicable)
+
+        # Production
+        cf["has_production"].set(contract.production.has_production)
+        cf["technology"].set(contract.production.technology)
+        cf["installed_capacity"].set(
+            str(contract.production.installed_capacity_kwp))
+        cf["injection_tariff"].set(
+            str(contract.production.injection_tariff_eur_per_kwh))
+        cf["metering_mode"].set(contract.production.metering_mode.value)
+        cf["avoids_energy"].set(contract.production.avoids_energy_charge)
+        cf["avoids_grid_fee"].set(
+            contract.production.avoids_grid_energy_fee)
+        cf["avoids_excise"].set(contract.production.avoids_excise)
+        cf["gc_eligible"].set(
+            contract.production.green_certificate_eligible)
+        cf["gc_value"].set(
+            str(contract.production.green_certificate_value_eur_per_mwh))
+
+        # Penalties
+        cf["min_offtake"].set(
+            str(contract.penalties.minimum_offtake_kwh_year))
+        cf["min_offtake_penalty"].set(
+            str(contract.penalties.minimum_offtake_penalty_eur_per_kwh))
+
+    def _apply_manual_contract(self):
+        """Build an EnergyContract from the manual form and set it active."""
+        cf = self._cf
+        try:
+            # Parse time periods
+            time_periods = []
+            for pv in cf["periods"]:
+                name = pv["name"].get().strip()
+                if not name:
+                    continue
+                price_str = pv["price"].get().strip()
+                if not price_str:
+                    continue
+                months_str = pv["months"].get().strip()
+                days_str = pv["days"].get().strip()
+                months = [int(m.strip()) for m in months_str.split(",")
+                          if m.strip()]
+                days = [int(d.strip()) for d in days_str.split(",")
+                        if d.strip()]
+                start_h = int(pv["start_h"].get() or 0)
+                end_h = int(pv["end_h"].get() or 23)
+                grid_price_str = pv["grid_price"].get().strip()
+
+                time_periods.append(TimePeriod(
+                    name=name,
+                    price_eur_per_kwh=float(price_str),
+                    grid_energy_eur_per_kwh=float(grid_price_str) if grid_price_str else 0.0,
+                    months=months,
+                    days_of_week=days,
+                    start_time=time(start_h, 0),
+                    end_time=time(end_h, 59),
+                ))
+
+            contract = EnergyContract(
+                contract_name=cf["contract_name"].get().strip(),
+                supplier=cf["supplier"].get().strip(),
+                country=Country(cf["country"].get()),
+                voltage_level=VoltageLevel(cf["voltage_level"].get()),
+                energy=EnergyCharges(
+                    price_type=PriceType(cf["price_type"].get()),
+                    time_periods=time_periods,
+                    flat_price_eur_per_kwh=float(
+                        cf["flat_price"].get() or 0),
+                ),
+                grid=GridFees(
+                    capacity_charge_eur_per_kw_year=float(
+                        cf["capacity_charge"].get() or 0),
+                    subscribed_power_kw=float(
+                        cf["subscribed_power"].get() or 0),
+                    connection_power_limit_kw=float(
+                        cf["connection_limit"].get() or 0),
+                    flat_grid_energy_eur_per_kwh=float(
+                        cf["flat_grid_energy"].get() or 0),
+                    time_differentiated=cf["time_diff"].get(),
+                    overshoot_penalty_eur_per_kw=float(
+                        cf["overshoot_penalty"].get() or 0),
+                ),
+                taxes=TaxesAndLevies(
+                    excise_eur_per_kwh=float(
+                        cf["excise"].get() or 0),
+                    renewable_levy_eur_per_kwh=float(
+                        cf["renewable_levy"].get() or 0),
+                    other_levies_eur_per_kwh=float(
+                        cf["other_levies"].get() or 0),
+                    vat_rate=float(cf["vat_rate"].get() or 0.21),
+                    vat_applicable=cf["vat_applicable"].get(),
+                ),
+                production=OnSiteProduction(
+                    has_production=cf["has_production"].get(),
+                    technology=cf["technology"].get().strip(),
+                    installed_capacity_kwp=float(
+                        cf["installed_capacity"].get() or 0),
+                    metering_mode=MeteringMode(
+                        cf["metering_mode"].get()),
+                    injection_tariff_eur_per_kwh=float(
+                        cf["injection_tariff"].get() or 0),
+                    avoids_energy_charge=cf["avoids_energy"].get(),
+                    avoids_grid_energy_fee=cf["avoids_grid_fee"].get(),
+                    avoids_excise=cf["avoids_excise"].get(),
+                    green_certificate_eligible=cf["gc_eligible"].get(),
+                    green_certificate_value_eur_per_mwh=float(
+                        cf["gc_value"].get() or 0),
+                ),
+                penalties=Penalties(
+                    minimum_offtake_kwh_year=float(
+                        cf["min_offtake"].get() or 0),
+                    minimum_offtake_penalty_eur_per_kwh=float(
+                        cf["min_offtake_penalty"].get() or 0),
+                ),
+                source="manual",
+            )
+
+            self._set_active_contract(contract)
+
+        except (ValueError, TypeError) as e:
+            messagebox.showerror("Input Error",
+                                 f"Invalid contract values:\n{str(e)}")
+
+    # --- Contract Management ---
+
+    def _set_active_contract(self, contract: EnergyContract):
+        """Set the active contract and update the summary display."""
+        # Auto-detect production data
+        if (self.transformed_df is not None
+                and "Production (kW)" in self.transformed_df.columns):
+            if not contract.production.has_production:
+                contract.production.has_production = True
+
+        self.cost_contract = contract
+
+        # Update summary display
+        self.contract_summary_text.config(state=tk.NORMAL)
+        self.contract_summary_text.delete(1.0, tk.END)
+        self.contract_summary_text.insert(tk.END, contract.summary())
+        self.contract_summary_text.config(state=tk.DISABLED)
+
+    # --- Simulation ---
+
+    def run_cost_simulation(self):
+        """Run the cost simulation with current contract and data."""
+        if self.transformed_df is None:
+            messagebox.showwarning("Warning",
+                                   "Please transform data first (Step 5).")
+            return
+
+        if self.cost_contract is None:
+            messagebox.showwarning("Warning",
+                                   "Please load or define a contract first.")
+            return
+
+        self.update_progress(10, "Preparing cost simulation...")
+
+        try:
+            df = self.transformed_df.copy()
+
+            # Build datetime-indexed DataFrames for the simulator
+            df["Date & Time"] = pd.to_datetime(df["Date & Time"])
+            cons_df = df.set_index("Date & Time")[["Consumption (kW)"]].rename(
+                columns={"Consumption (kW)": "consumption_kw"})
+
+            prod_df = None
+            if "Production (kW)" in df.columns:
+                prod_df = df.set_index("Date & Time")[["Production (kW)"]].rename(
+                    columns={"Production (kW)": "production_kw"})
+
+            self.update_progress(30, "Running cost simulation...")
+
+            simulator = CostSimulator(self.cost_contract)
+            detail_df, summary, monthly = simulator.simulate(
+                cons_df, prod_df)
+
+            self.cost_simulation_result = (detail_df, summary, monthly)
+
+            self.update_progress(70, "Generating charts...")
+
+            # Display results
+            self._display_cost_results(summary, monthly)
+            self._display_cost_charts(summary, monthly)
+
+            # Show battery link if production data available
+            self._show_battery_link(summary)
+
+            self.update_progress(100, "Cost simulation complete!")
+
+        except Exception as e:
+            self.update_progress(0, "Cost simulation failed")
+            messagebox.showerror("Error",
+                                 f"Cost simulation failed:\n{str(e)}")
+
+    def _display_cost_results(self, summary: CostBreakdown,
+                               monthly: dict):
+        """Display cost simulation results in the GUI."""
+        for w in self.cost_results_frame.winfo_children():
+            w.destroy()
+
+        # Summary container
+        container = tk.Frame(self.cost_results_frame, bg=COLORS["white"],
+                             relief=tk.FLAT, bd=1,
+                             highlightbackground=COLORS["light_gray"],
+                             highlightthickness=1)
+        container.pack(fill=tk.X, padx=5, pady=5)
+
+        # Title bar
+        title_bar = tk.Frame(container, bg=COLORS["primary"])
+        title_bar.pack(fill=tk.X)
+        tk.Label(title_bar, text="COST SIMULATION RESULTS",
+                 font=("Segoe UI", 11, "bold"),
+                 bg=COLORS["primary"], fg=COLORS["white"],
+                 padx=15, pady=8).pack(side=tk.LEFT)
+
+        # Volumes section
+        vol_frame = tk.Frame(container, bg=COLORS["white"],
+                              padx=15, pady=10)
+        vol_frame.pack(fill=tk.X)
+
+        vol_data = [
+            ("Total Consumption:",
+             f"{summary.total_consumption_kwh / 1000:,.1f} MWh"),
+            ("Total Production:",
+             f"{summary.total_production_kwh / 1000:,.1f} MWh"),
+            ("Self-Consumed:",
+             f"{summary.self_consumed_kwh / 1000:,.1f} MWh "
+             f"({summary.self_consumption_rate:.1%})"),
+            ("Grid Consumed:",
+             f"{summary.grid_consumed_kwh / 1000:,.1f} MWh"),
+            ("Autarky Rate:", f"{summary.autarky_rate:.1%}"),
+        ]
+        for i, (label, value) in enumerate(vol_data):
+            tk.Label(vol_frame, text=label, font=("Segoe UI", 10),
+                     bg=COLORS["white"], fg=COLORS["text_dark"]).grid(
+                         row=i, column=0, sticky=tk.W, pady=2)
+            tk.Label(vol_frame, text=value,
+                     font=("Segoe UI", 10, "bold"),
+                     bg=COLORS["white"], fg=COLORS["primary"]).grid(
+                         row=i, column=1, sticky=tk.E,
+                         padx=(20, 0), pady=2)
+
+        # Separator
+        tk.Frame(container, bg=COLORS["light_gray"],
+                 height=1).pack(fill=tk.X, padx=15)
+
+        # Cost section
+        cost_title = tk.Frame(container, bg=COLORS["primary"])
+        cost_title.pack(fill=tk.X)
+        tk.Label(cost_title, text="COST BREAKDOWN",
+                 font=("Segoe UI", 11, "bold"),
+                 bg=COLORS["primary"], fg=COLORS["white"],
+                 padx=15, pady=8).pack(side=tk.LEFT)
+
+        cost_frame = tk.Frame(container, bg=COLORS["white"],
+                               padx=15, pady=10)
+        cost_frame.pack(fill=tk.X)
+
+        cost_data = [
+            ("Energy Cost:",
+             f"\u20ac{summary.energy_cost:,.2f}",
+             COLORS["primary"]),
+            ("Grid Capacity Cost:",
+             f"\u20ac{summary.grid_capacity_cost:,.2f}",
+             COLORS["primary"]),
+            ("Grid Energy Cost:",
+             f"\u20ac{summary.grid_energy_cost:,.2f}",
+             COLORS["primary"]),
+            ("Taxes & Levies:",
+             f"\u20ac{summary.taxes_and_levies:,.2f}",
+             COLORS["primary"]),
+            ("Overshoot Penalties:",
+             f"\u20ac{summary.overshoot_penalties:,.2f}",
+             COLORS["warning"] if summary.overshoot_penalties > 0
+             else COLORS["primary"]),
+            ("Injection Revenue:",
+             f"-\u20ac{summary.injection_revenue:,.2f}",
+             COLORS["success"]),
+        ]
+        if summary.green_certificate_revenue > 0:
+            cost_data.append(
+                ("Green Certificate Revenue:",
+                 f"-\u20ac{summary.green_certificate_revenue:,.2f}",
+                 COLORS["success"]))
+
+        for i, (label, value, color) in enumerate(cost_data):
+            tk.Label(cost_frame, text=label, font=("Segoe UI", 10),
+                     bg=COLORS["white"], fg=COLORS["text_dark"]).grid(
+                         row=i, column=0, sticky=tk.W, pady=2)
+            tk.Label(cost_frame, text=value,
+                     font=("Segoe UI", 10, "bold"),
+                     bg=COLORS["white"], fg=color).grid(
+                         row=i, column=1, sticky=tk.E,
+                         padx=(20, 0), pady=2)
+
+        # Total line
+        sep_row = len(cost_data)
+        tk.Frame(cost_frame, bg=COLORS["text_dark"],
+                 height=2).grid(row=sep_row, column=0, columnspan=2,
+                                sticky="ew", pady=5)
+
+        avg_cost = (summary.total_cost_excl_vat /
+                    max(summary.total_consumption_kwh, 1))
+        total_data = [
+            ("TOTAL (excl. VAT):",
+             f"\u20ac{summary.total_cost_excl_vat:,.2f}",
+             COLORS["secondary"]),
+            ("Average Cost:",
+             f"\u20ac{avg_cost:.4f}/kWh",
+             COLORS["primary"]),
+            ("Peak Net Demand:",
+             f"{summary.peak_demand_kw:,.1f} kW",
+             COLORS["primary"]),
+        ]
+        for j, (label, value, color) in enumerate(total_data):
+            row = sep_row + 1 + j
+            tk.Label(cost_frame, text=label,
+                     font=("Segoe UI", 10, "bold"),
+                     bg=COLORS["white"], fg=COLORS["text_dark"]).grid(
+                         row=row, column=0, sticky=tk.W, pady=2)
+            tk.Label(cost_frame, text=value,
+                     font=("Segoe UI", 11, "bold"),
+                     bg=COLORS["white"], fg=color).grid(
+                         row=row, column=1, sticky=tk.E,
+                         padx=(20, 0), pady=2)
+
+    def _display_cost_charts(self, summary: CostBreakdown,
+                              monthly: dict):
+        """Generate and display cost simulation charts."""
+        self._cost_chart_images.clear()
+        for w in self.cost_chart_frame.winfo_children():
+            w.destroy()
+
+        # Prepare summary dict for chart functions
+        summary_dict = {
+            "energy_cost": summary.energy_cost,
+            "grid_capacity_cost": summary.grid_capacity_cost,
+            "grid_energy_cost": summary.grid_energy_cost,
+            "taxes_and_levies": summary.taxes_and_levies,
+            "overshoot_penalties": summary.overshoot_penalties,
+            "prosumer_tariff": summary.prosumer_tariff,
+        }
+
+        # Prepare monthly dict
+        monthly_dict = {}
+        for k, mb in monthly.items():
+            monthly_dict[k] = {
+                "energy_cost": mb.energy_cost,
+                "grid_capacity_cost": mb.grid_capacity_cost,
+                "grid_energy_cost": mb.grid_energy_cost,
+                "taxes_and_levies": mb.taxes_and_levies,
+                "overshoot_penalties": mb.overshoot_penalties,
+            }
+
+        charts = [
+            ("Cost Breakdown", generate_cost_breakdown_pie(summary_dict)),
+            ("Monthly Costs",
+             generate_monthly_cost_bar_chart(monthly_dict)),
+        ]
+
+        for title, chart_bytes in charts:
+            img = Image.open(io.BytesIO(chart_bytes))
+            display_width = 750
+            ratio = display_width / img.width
+            display_height = int(img.height * ratio)
+            img = img.resize((display_width, display_height),
+                             Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._cost_chart_images.append(photo)
+            label = tk.Label(self.cost_chart_frame, image=photo,
+                             bg=COLORS["white"])
+            label.pack(pady=3)
+
+    def _show_battery_link(self, summary: CostBreakdown):
+        """Show link to battery dimensioning after cost simulation."""
+        for w in self.battery_link_frame.winfo_children():
+            w.destroy()
+
+        if (self.transformed_df is not None
+                and "Production (kW)" in self.transformed_df.columns):
+            link_text = tk.Label(
+                self.battery_link_frame,
+                text="Production data detected. You can use the "
+                     "Battery Dimensioning section (above) to simulate "
+                     "battery savings with these contract tariffs.",
+                font=("Segoe UI", 9, "italic"),
+                bg=COLORS["white"], fg=COLORS["primary"],
+                wraplength=700)
+            link_text.pack(anchor=tk.W, pady=5)
+
+            # Pre-fill battery tariffs from contract
+            if self.cost_contract:
+                avg_energy = 0
+                if self.cost_contract.energy.time_periods:
+                    prices = [tp.price_eur_per_kwh
+                              for tp in self.cost_contract.energy.time_periods]
+                    avg_energy = sum(prices) / len(prices)
+                else:
+                    avg_energy = self.cost_contract.energy.flat_price_eur_per_kwh
+                # Convert to €/MWh for battery section
+                self.offtake_var.set(str(round(avg_energy * 1000, 1)))
+                inj = self.cost_contract.production.injection_tariff_eur_per_kwh
+                self.injection_var.set(str(round(inj * 1000, 1)))
+                # Peak tariff from capacity charge
+                cap = self.cost_contract.grid.capacity_charge_eur_per_kw_year
+                self.peak_tariff_var.set(str(round(cap / 12, 1)))
+
+    # --- Scenario Comparison ---
+
+    def _add_scenario(self):
+        """Add current contract as a comparison scenario."""
+        if self.cost_contract is None:
+            messagebox.showwarning("Warning",
+                                   "Please load a contract first.")
+            return
+        name = self.cost_contract.contract_name
+        if not name:
+            name = f"Scenario {len(self.cost_scenarios) + 1}"
+        self.cost_scenarios[name] = self.cost_contract
+        self._update_scenario_label()
+        messagebox.showinfo("Scenario Added",
+                            f"'{name}' added to comparison "
+                            f"({len(self.cost_scenarios)} total).")
+
+    def _update_scenario_label(self):
+        """Update the scenario list label."""
+        if self.cost_scenarios:
+            names = ", ".join(self.cost_scenarios.keys())
+            self.scenario_label.config(
+                text=f"Scenarios: {names}")
+        else:
+            self.scenario_label.config(text="Scenarios: (none)")
+
+    def _run_scenario_comparison(self):
+        """Run comparison across all added scenarios."""
+        if len(self.cost_scenarios) < 2:
+            messagebox.showwarning("Warning",
+                                   "Add at least 2 scenarios to compare.")
+            return
+
+        if self.transformed_df is None:
+            messagebox.showwarning("Warning",
+                                   "Please transform data first.")
+            return
+
+        self.update_progress(10, "Running scenario comparison...")
+
+        try:
+            df = self.transformed_df.copy()
+            df["Date & Time"] = pd.to_datetime(df["Date & Time"])
+            cons_df = df.set_index("Date & Time")[["Consumption (kW)"]].rename(
+                columns={"Consumption (kW)": "consumption_kw"})
+
+            prod_df = None
+            if "Production (kW)" in df.columns:
+                prod_df = df.set_index("Date & Time")[["Production (kW)"]].rename(
+                    columns={"Production (kW)": "production_kw"})
+
+            self.update_progress(40, "Comparing scenarios...")
+
+            self.cost_comparison_df = compare_scenarios(
+                cons_df, prod_df, self.cost_scenarios)
+
+            self.update_progress(70, "Generating comparison chart...")
+
+            # Display comparison
+            comparison_data = self.cost_comparison_df.to_dict("records")
+            chart_bytes = generate_scenario_comparison_chart(
+                comparison_data)
+
+            img = Image.open(io.BytesIO(chart_bytes))
+            display_width = 750
+            ratio = display_width / img.width
+            display_height = int(img.height * ratio)
+            img = img.resize((display_width, display_height),
+                             Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._cost_chart_images.append(photo)
+            label = tk.Label(self.cost_chart_frame, image=photo,
+                             bg=COLORS["white"])
+            label.pack(pady=3)
+
+            # Show comparison table in results
+            comp_text = tk.Text(self.cost_results_frame, height=6,
+                                width=100, font=("Consolas", 8),
+                                bg=COLORS["bg"], fg=COLORS["text_dark"],
+                                relief=tk.FLAT, padx=10, pady=10)
+            comp_text.pack(fill=tk.X, pady=5)
+            comp_text.insert(tk.END,
+                             self.cost_comparison_df.to_string(index=False))
+            comp_text.config(state=tk.DISABLED)
+
+            self.update_progress(100, "Scenario comparison complete!")
+
+        except Exception as e:
+            self.update_progress(0, "Scenario comparison failed")
+            messagebox.showerror("Error",
+                                 f"Comparison failed:\n{str(e)}")
+
+    # --- Export Methods ---
+
+    def _export_contract_json(self):
+        """Export the current contract as a JSON file."""
+        if self.cost_contract is None:
+            messagebox.showwarning("Warning",
+                                   "No contract loaded to export.")
+            return
+
+        name = self.cost_contract.contract_name or "contract"
+        save_path = filedialog.asksaveasfilename(
+            initialfile=f"{name.replace(' ', '_')}.json",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json")])
+        if not save_path:
+            return
+
+        try:
+            save_contract_json(self.cost_contract, save_path)
+            messagebox.showinfo("Exported",
+                                f"Contract saved to:\n{save_path}")
+        except Exception as e:
+            messagebox.showerror("Error",
+                                 f"Export failed:\n{str(e)}")
+
+    def _export_cost_xlsx(self):
+        """Export cost simulation results to Excel."""
+        if self.cost_simulation_result is None:
+            messagebox.showwarning("Warning",
+                                   "Please run cost simulation first.")
+            return
+
+        _, summary, monthly = self.cost_simulation_result
+
+        site_name = self.site_name_var.get().strip() or "site"
+        default_name = f"{site_name}_cost_simulation.xlsx"
+
+        save_path = filedialog.asksaveasfilename(
+            initialfile=default_name,
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")])
+        if not save_path:
+            return
+
+        try:
+            # Convert CostBreakdown objects to dicts
+            summary_dict = {
+                "total_consumption_kwh": summary.total_consumption_kwh,
+                "total_production_kwh": summary.total_production_kwh,
+                "self_consumed_kwh": summary.self_consumed_kwh,
+                "grid_consumed_kwh": summary.grid_consumed_kwh,
+                "injected_kwh": summary.injected_kwh,
+                "self_consumption_rate": summary.self_consumption_rate,
+                "autarky_rate": summary.autarky_rate,
+                "energy_cost": summary.energy_cost,
+                "grid_capacity_cost": summary.grid_capacity_cost,
+                "grid_energy_cost": summary.grid_energy_cost,
+                "taxes_and_levies": summary.taxes_and_levies,
+                "overshoot_penalties": summary.overshoot_penalties,
+                "injection_revenue": summary.injection_revenue,
+                "total_cost_excl_vat": summary.total_cost_excl_vat,
+                "peak_demand_kw": summary.peak_demand_kw,
+                "overshoots_count": summary.overshoots_count,
+            }
+
+            monthly_dict = {}
+            for k, mb in monthly.items():
+                monthly_dict[k] = {
+                    "total_consumption_kwh": mb.total_consumption_kwh,
+                    "total_production_kwh": mb.total_production_kwh,
+                    "self_consumption_rate": mb.self_consumption_rate,
+                    "energy_cost": mb.energy_cost,
+                    "grid_capacity_cost": mb.grid_capacity_cost,
+                    "grid_energy_cost": mb.grid_energy_cost,
+                    "taxes_and_levies": mb.taxes_and_levies,
+                    "overshoot_penalties": mb.overshoot_penalties,
+                    "total_cost_excl_vat": mb.total_cost_excl_vat,
+                    "peak_demand_kw": mb.peak_demand_kw,
+                }
+
+            comparison = None
+            if self.cost_comparison_df is not None:
+                comparison = self.cost_comparison_df.to_dict("records")
+
+            save_cost_simulation_xlsx(save_path, summary_dict,
+                                      monthly_dict, comparison)
+            messagebox.showinfo("Exported",
+                                f"Cost simulation saved to:\n{save_path}")
+
+        except Exception as e:
+            messagebox.showerror("Error",
+                                 f"Excel export failed:\n{str(e)}")
+
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""
-        content = self.create_card(self.content_frame, "10. Developer Tools")
+        content = self.create_card(self.content_frame, "11. Developer Tools")
 
         tools_row = tk.Frame(content, bg=COLORS["white"])
         tools_row.pack(fill=tk.X)
