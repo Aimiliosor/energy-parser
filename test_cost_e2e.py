@@ -1,5 +1,5 @@
 """
-End-to-end cost simulation test using real CSV data and all 17 DB contracts.
+End-to-end cost simulation test using real CSV data and all DB contracts.
 """
 import os
 import sys
@@ -65,7 +65,7 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-# === 2. Load all 17 contracts from DB ===
+# === 2. Load all contracts from DB ===
 test("2. Load contracts database")
 try:
     hierarchy, metadata = load_contracts_db(get_default_db_path())
@@ -76,7 +76,7 @@ try:
                 cid = metadata[name]["id"]
                 all_contracts[cid] = contract
                 print(f"  [{cid}] {name}")
-    assert len(all_contracts) == 17, f"Expected 17, got {len(all_contracts)}"
+    assert len(all_contracts) == 3, f"Expected 3, got {len(all_contracts)}"
     passed += 1
     print(f"  PASS: {len(all_contracts)} contracts loaded")
 except Exception as e:
@@ -85,7 +85,7 @@ except Exception as e:
     traceback.print_exc()
 
 # === 3. Simulate each contract ===
-test("3. Simulate all 17 contracts")
+test("3. Simulate all contracts")
 results = {}
 try:
     for cid, contract in all_contracts.items():
@@ -100,24 +100,24 @@ try:
         print(f"  {cid}: EUR {summary.total_cost_excl_vat:,.2f} "
               f"(avg {avg_kwh:.4f}/kWh, peak {summary.peak_demand_kw:.0f} kW"
               f"{prod_info})")
-    assert len(results) == 17
+    assert len(results) == 3
     passed += 1
-    print(f"  PASS: All 17 simulations completed")
+    print(f"  PASS: All {len(results)} simulations completed")
 except Exception as e:
     errors.append(("Simulate all", e))
     print(f"  FAIL: {e}")
     traceback.print_exc()
 
-# === 4. Scenario comparison: top 5 cheapest ===
-test("4. Scenario comparison (top 5 cheapest)")
+# === 4. Scenario comparison ===
+test("4. Scenario comparison")
 try:
     sorted_results = sorted(results.items(),
                              key=lambda x: x[1][1].total_cost_excl_vat)
-    top5 = {cid: all_contracts[cid] for cid, _ in sorted_results[:5]}
-    comp_df = compare_scenarios(cons_df, prod_df, top5)
+    top_contracts = {cid: all_contracts[cid] for cid, _ in sorted_results}
+    comp_df = compare_scenarios(cons_df, prod_df, top_contracts)
     print(comp_df[["Scenario", "Total Cost (excl. VAT)", "Avg \u20ac/kWh",
                     "Self-Consumption Rate"]].to_string(index=False))
-    assert len(comp_df) == 5
+    assert len(comp_df) == 3
     passed += 1
     print("  PASS")
 except Exception as e:
@@ -212,34 +212,10 @@ except Exception as e:
     print(f"  FAIL: {e}")
     traceback.print_exc()
 
-# === 7. Verify PV contracts produce savings ===
-test("7. PV contracts produce savings vs base")
+# === 7. Monthly breakdown sanity ===
+test("7. Monthly breakdown sanity")
 try:
-    pv_pairs = [
-        ("FR-HTA-FIXED-5P", "FR-HTA-FIXED-5P-PV"),
-        ("BE-FL-MV-FIXED", "BE-FL-MV-FIXED-PV"),
-        ("BE-WAL-MV-FIXED", "BE-WAL-MV-FIXED-PV-GC"),
-    ]
-    for base_id, pv_id in pv_pairs:
-        base_cost = results[base_id][1].total_cost_excl_vat
-        pv_cost = results[pv_id][1].total_cost_excl_vat
-        savings = base_cost - pv_cost
-        pct = savings / base_cost * 100 if base_cost > 0 else 0
-        print(f"  {base_id} -> {pv_id}: "
-              f"EUR {base_cost:,.0f} -> EUR {pv_cost:,.0f} "
-              f"(savings EUR {savings:,.0f}, {pct:.1f}%)")
-        assert pv_cost < base_cost, f"PV should reduce cost: {pv_id}"
-    passed += 1
-    print("  PASS: All PV contracts show savings")
-except Exception as e:
-    errors.append(("PV savings", e))
-    print(f"  FAIL: {e}")
-    traceback.print_exc()
-
-# === 8. Monthly breakdown sanity ===
-test("8. Monthly breakdown sanity")
-try:
-    for cid in ["FR-HTA-FIXED-5P", "BE-FL-MV-FIXED", "BE-BXL-LV-FIXED"]:
+    for cid in list(all_contracts.keys()):
         summary = results[cid][1]
         monthly = results[cid][2]
         monthly_cons = sum(m.total_consumption_kwh for m in monthly.values())
