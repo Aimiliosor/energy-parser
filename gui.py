@@ -217,7 +217,6 @@ class EnergyParserGUI:
         self.battery_result = None
         self.cost_simulation_result = None  # (detail_df, summary, monthly)
         self.cost_contract = None           # Current EnergyContract
-        self._section_cards = {}            # Collapsible section references
 
         # Column selections
         self.date_col_var = tk.StringVar(value="0")
@@ -540,9 +539,8 @@ class EnergyParserGUI:
 
         # Right side - removed the small energy image (now using as background)
 
-    def create_card(self, parent, title, collapsible=False, initially_open=True,
-                    section_num=None):
-        """Create a card-style container, optionally collapsible."""
+    def create_card(self, parent, title):
+        """Create a card-style container."""
         outer_frame = tk.Frame(parent, bg=COLORS["bg"])
         outer_frame.pack(fill=tk.X, pady=10)
 
@@ -554,13 +552,7 @@ class EnergyParserGUI:
         title_bar = tk.Frame(card, bg=COLORS["primary"])
         title_bar.pack(fill=tk.X)
 
-        if collapsible:
-            arrow = "\u25BC" if initially_open else "\u25B6"
-            display_text = f" {arrow}  {title}"
-        else:
-            display_text = title
-
-        title_label = tk.Label(title_bar, text=display_text,
+        title_label = tk.Label(title_bar, text=title,
                               font=("Segoe UI", 11, "bold"),
                               bg=COLORS["primary"], fg=COLORS["white"],
                               padx=15, pady=8)
@@ -568,85 +560,13 @@ class EnergyParserGUI:
 
         # Content area
         content = tk.Frame(card, bg=COLORS["white"], padx=15, pady=15)
-        if not collapsible or initially_open:
-            content.pack(fill=tk.X)
-
-        if collapsible:
-            is_open = [initially_open]
-            title_bar.config(cursor="hand2")
-            title_label.config(cursor="hand2")
-
-            def toggle(event=None):
-                if is_open[0]:
-                    content.pack_forget()
-                    title_label.config(text=f" \u25B6  {title}")
-                    is_open[0] = False
-                else:
-                    content.pack(fill=tk.X)
-                    title_label.config(text=f" \u25BC  {title}")
-                    is_open[0] = True
-
-            title_bar.bind("<Button-1>", toggle)
-            title_label.bind("<Button-1>", toggle)
-
-            # Store section info for programmatic expand/collapse
-            if section_num is not None:
-                if not hasattr(self, '_section_cards'):
-                    self._section_cards = {}
-                self._section_cards[section_num] = {
-                    'content': content,
-                    'title_label': title_label,
-                    'title': title,
-                    'is_open': is_open,
-                    'outer_frame': outer_frame,
-                }
+        content.pack(fill=tk.X)
 
         return content
 
-    def _expand_section(self, section_num):
-        """Expand a collapsible section and scroll to it."""
-        info = self._section_cards.get(section_num)
-        if not info:
-            return
-        if not info['is_open'][0]:
-            info['content'].pack(fill=tk.X)
-            info['title_label'].config(text=f" \u25BC  {info['title']}")
-            info['is_open'][0] = True
-        # Scroll to the section after a brief delay for geometry update
-        self.root.after(50, lambda: self._scroll_to_widget(info['outer_frame']))
-
-    def _collapse_section(self, section_num):
-        """Collapse a collapsible section."""
-        info = self._section_cards.get(section_num)
-        if not info:
-            return
-        if info['is_open'][0]:
-            info['content'].pack_forget()
-            info['title_label'].config(text=f" \u25B6  {info['title']}")
-            info['is_open'][0] = False
-
-    def _scroll_to_widget(self, widget):
-        """Scroll the main canvas so that widget is visible."""
-        self.content_canvas.update_idletasks()
-        try:
-            # Get widget position relative to the content_frame
-            y = widget.winfo_y()
-            canvas_height = self.content_canvas.winfo_height()
-            scroll_region = self.content_canvas.bbox("all")
-            if scroll_region:
-                total_height = scroll_region[3] - scroll_region[1]
-                if total_height > canvas_height:
-                    fraction = max(0.0, min(1.0, y / total_height))
-                    self.content_canvas.yview_moveto(fraction)
-                    self._reposition_bg()
-        except Exception:
-            pass
-
     def create_file_section(self):
         """Create the file selection section."""
-        content = self.create_card(self.content_frame, "1. Select File",
-                                   collapsible=True, initially_open=True,
-                                   section_num=1)
+        content = self.create_card(self.content_frame, "1. Select File")
 
         # File selection row
         file_row = tk.Frame(content, bg=COLORS["white"])
@@ -674,9 +594,7 @@ class EnergyParserGUI:
 
     def create_site_info_section(self):
         """Create the site information section."""
-        content = self.create_card(self.content_frame, "2. Site Information",
-                                   collapsible=True, initially_open=False,
-                                   section_num=2)
+        content = self.create_card(self.content_frame, "2. Site Information")
 
         info_grid = tk.Frame(content, bg=COLORS["white"])
         info_grid.pack(fill=tk.X)
@@ -699,9 +617,7 @@ class EnergyParserGUI:
 
     def create_preview_section(self):
         """Create the data preview section."""
-        content = self.create_card(self.content_frame, "3. Data Preview",
-                                   collapsible=True, initially_open=False,
-                                   section_num=3)
+        content = self.create_card(self.content_frame, "3. Data Preview")
 
         # Preview table
         tree_frame = tk.Frame(content, bg=COLORS["white"])
@@ -733,9 +649,7 @@ class EnergyParserGUI:
 
     def create_config_section(self):
         """Create the configuration section."""
-        content = self.create_card(self.content_frame, "4. Column Configuration",
-                                   collapsible=True, initially_open=False,
-                                   section_num=4)
+        content = self.create_card(self.content_frame, "4. Column Configuration")
 
         # Grid for column selection
         config_grid = tk.Frame(content, bg=COLORS["white"])
@@ -782,9 +696,7 @@ class EnergyParserGUI:
 
     def create_actions_section(self):
         """Create the actions section."""
-        content = self.create_card(self.content_frame, "5. Process Data",
-                                   collapsible=True, initially_open=False,
-                                   section_num=5)
+        content = self.create_card(self.content_frame, "5. Process Data")
 
         # Buttons row
         btn_row = tk.Frame(content, bg=COLORS["white"])
@@ -832,9 +744,7 @@ class EnergyParserGUI:
 
     def create_results_section(self):
         """Create the results display section."""
-        content = self.create_card(self.content_frame, "6. Results & Quality Report",
-                                   collapsible=True, initially_open=False,
-                                   section_num=6)
+        content = self.create_card(self.content_frame, "6. Results & Quality Report")
 
         # Results text area
         self.results_text = tk.Text(content, height=12, width=100,
@@ -854,9 +764,7 @@ class EnergyParserGUI:
 
     def create_kpi_section(self):
         """Create the KPI dashboard section."""
-        content = self.create_card(self.content_frame, "7. KPI Dashboard",
-                                   collapsible=True, initially_open=False,
-                                   section_num=7)
+        content = self.create_card(self.content_frame, "7. KPI Dashboard")
 
         self.kpi_placeholder = tk.Label(
             content, text="Run Quality Check to see KPI dashboard",
@@ -1122,9 +1030,7 @@ class EnergyParserGUI:
 
     def create_statistics_section(self):
         """Create the statistical analysis section."""
-        content = self.create_card(self.content_frame, "8. Statistical Analysis",
-                                   collapsible=True, initially_open=False,
-                                   section_num=8)
+        content = self.create_card(self.content_frame, "8. Statistical Analysis")
 
         # Checkbox grid
         checkbox_frame = tk.Frame(content, bg=COLORS["white"])
@@ -1536,9 +1442,6 @@ class EnergyParserGUI:
 
             self.update_progress(100, "Analysis complete!")
 
-            # Auto-expand statistical analysis section to show results
-            self._expand_section(8)
-
         except Exception as e:
             self.update_progress(0, "Error during analysis")
             messagebox.showerror("Error", f"Statistical analysis failed:\n{str(e)}")
@@ -1702,9 +1605,7 @@ class EnergyParserGUI:
     def create_battery_section(self):
         """Create the battery dimensioning section."""
         content = self.create_card(self.content_frame,
-                                   "9. Battery Dimensioning Analysis",
-                                   collapsible=True, initially_open=False,
-                                   section_num=9)
+                                   "9. Battery Dimensioning Analysis")
 
         # Enable checkbox
         self.battery_enabled_var = tk.BooleanVar(value=False)
@@ -1996,9 +1897,7 @@ class EnergyParserGUI:
     def create_cost_simulation_section(self):
         """Create the energy cost simulation section."""
         content = self.create_card(self.content_frame,
-                                   "10. Energy Cost Simulation",
-                                   collapsible=True, initially_open=False,
-                                   section_num=10)
+                                   "10. Energy Cost Simulation")
 
         # --- Contract Input Method Selection ---
         method_frame = tk.Frame(content, bg=COLORS["white"])
@@ -3115,9 +3014,6 @@ class EnergyParserGUI:
 
             self.update_progress(100, "Cost simulation complete!")
 
-            # Auto-expand cost simulation section to show results
-            self._expand_section(10)
-
         except Exception as e:
             self.update_progress(0, "Cost simulation failed")
             messagebox.showerror("Error",
@@ -3427,9 +3323,7 @@ class EnergyParserGUI:
 
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""
-        content = self.create_card(self.content_frame, "11. Developer Tools",
-                                   collapsible=True, initially_open=False,
-                                   section_num=11)
+        content = self.create_card(self.content_frame, "11. Developer Tools")
 
         tools_row = tk.Frame(content, bg=COLORS["white"])
         tools_row.pack(fill=tk.X)
@@ -3562,12 +3456,6 @@ class EnergyParserGUI:
 
             # Enable transform button
             self.transform_btn.set_enabled(True)
-
-            # Auto-expand relevant sections
-            self._expand_section(2)
-            self._expand_section(3)
-            self._expand_section(4)
-            self._expand_section(5)
 
         except Exception as e:
             self.update_progress(0, "Error loading file")
@@ -3738,9 +3626,6 @@ class EnergyParserGUI:
             self.quality_btn.set_enabled(True)
             self.export_btn.set_enabled(True)
 
-            # Auto-expand results section
-            self._expand_section(6)
-
         except Exception as e:
             self.update_progress(0, "Error during transformation")
             messagebox.showerror("Error", f"Transformation failed:\n{str(e)}")
@@ -3790,9 +3675,6 @@ class EnergyParserGUI:
                 )
                 if total_issues > 0:
                     self.correct_btn.set_enabled(True)
-
-            # Auto-expand KPI dashboard
-            self._expand_section(7)
 
         except Exception as e:
             self.update_progress(0, "Error during quality check")
