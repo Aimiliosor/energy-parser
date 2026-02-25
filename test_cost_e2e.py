@@ -76,7 +76,7 @@ try:
                 cid = metadata[name]["id"]
                 all_contracts[cid] = contract
                 print(f"  [{cid}] {name}")
-    assert len(all_contracts) == 3, f"Expected 3, got {len(all_contracts)}"
+    assert len(all_contracts) == 17, f"Expected 17, got {len(all_contracts)}"
     passed += 1
     print(f"  PASS: {len(all_contracts)} contracts loaded")
 except Exception as e:
@@ -100,7 +100,7 @@ try:
         print(f"  {cid}: EUR {summary.total_cost_excl_vat:,.2f} "
               f"(avg {avg_kwh:.4f}/kWh, peak {summary.peak_demand_kw:.0f} kW"
               f"{prod_info})")
-    assert len(results) == 3
+    assert len(results) == 17
     passed += 1
     print(f"  PASS: All {len(results)} simulations completed")
 except Exception as e:
@@ -117,7 +117,7 @@ try:
     comp_df = compare_scenarios(cons_df, prod_df, top_contracts)
     print(comp_df[["Scenario", "Total Cost (excl. VAT)", "Avg \u20ac/kWh",
                     "Self-Consumption Rate"]].to_string(index=False))
-    assert len(comp_df) == 3
+    assert len(comp_df) == 17
     passed += 1
     print("  PASS")
 except Exception as e:
@@ -227,6 +227,33 @@ try:
     print("  PASS")
 except Exception as e:
     errors.append(("Monthly sanity", e))
+    print(f"  FAIL: {e}")
+    traceback.print_exc()
+
+# === 8. Tier metadata validation ===
+test("8. Tier metadata validation")
+try:
+    import json as _json
+    db_path = get_default_db_path()
+    with open(db_path, "r", encoding="utf-8") as f:
+        raw_db = _json.load(f)
+    complete_ids = {"FR-BT-SUP36-4P", "FR-BT-INF36-BASE", "FR-BT-INF36-HPHC"}
+    for entry in raw_db["contracts"]:
+        cid = entry["id"]
+        tier = entry.get("tier")
+        assert tier in ("complete", "partial"), f"{cid}: missing/bad tier={tier}"
+        if cid in complete_ids:
+            assert tier == "complete", f"{cid}: expected complete, got {tier}"
+            # Verify energy prices are non-zero
+            flat = entry["energy"].get("flat_price_eur_per_kwh", 0)
+            assert flat > 0, f"{cid}: flat_price should be >0, got {flat}"
+        else:
+            assert tier == "partial", f"{cid}: expected partial, got {tier}"
+    print(f"  All {len(raw_db['contracts'])} contracts have valid tier metadata")
+    passed += 1
+    print("  PASS")
+except Exception as e:
+    errors.append(("Tier metadata", e))
     print(f"  FAIL: {e}")
     traceback.print_exc()
 

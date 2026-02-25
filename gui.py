@@ -422,6 +422,10 @@ class EnergyParserGUI:
         # Configure combobox
         style.configure("TCombobox", padding=5)
 
+        # Field highlight styles for contract pre-fill
+        style.configure("Green.TEntry", fieldbackground="#D4EDDA")
+        style.configure("Yellow.TEntry", fieldbackground="#FFF3CD")
+
         # Configure progress bar
         style.configure("Custom.Horizontal.TProgressbar",
                        background=COLORS["secondary"],
@@ -2366,8 +2370,10 @@ class EnergyParserGUI:
 
         # Store all form variables
         self._cf = {}  # contract form variables
+        self._cf_widgets = {}  # key -> Entry widget for highlights
+        self._last_entry_widget = None
 
-        # --- Pre-fill from standard tariff ---
+        # --- Pre-fill from standard tariff (grouped dropdown) ---
         prefill_frame = tk.Frame(form, bg="#F0F4F8", padx=10, pady=8)
         prefill_frame.pack(fill=tk.X, pady=(0, 8))
 
@@ -2378,29 +2384,44 @@ class EnergyParserGUI:
                      side=tk.LEFT, padx=(0, 8))
 
         self._prefill_var = tk.StringVar(value="")
-        prefill_names = ["(blank — start from scratch)"]
-        if hasattr(self, '_contracts_db_flat') and self._contracts_db_flat:
-            prefill_names += list(self._contracts_db_flat.keys())
+        # Build grouped dropdown values
+        prefill_names = ["(blank \u2014 start from scratch)"]
+        self._prefill_name_map = {}  # display_text -> (real_name, tier)
+        if hasattr(self, '_contracts_db_groups') and self._contracts_db_groups:
+            for group_label, names in self._contracts_db_groups:
+                prefill_names.append(f"\u2500\u2500 {group_label} \u2500\u2500")
+                for name in names:
+                    tier = self._contracts_db_tier.get(name, "partial")
+                    prefix = "\u2705 " if tier == "complete" else "\u25CB "
+                    display = f"  {prefix}{name}"
+                    prefill_names.append(display)
+                    self._prefill_name_map[display] = (name, tier)
+
         self._prefill_combo = ttk.Combobox(
             prefill_frame, textvariable=self._prefill_var,
             values=prefill_names,
-            width=45, state="readonly", font=("Segoe UI", 9))
+            width=55, state="readonly", font=("Segoe UI", 9))
         self._prefill_combo.pack(side=tk.LEFT, padx=5)
         self._prefill_combo.current(0)
         self._prefill_combo.bind("<<ComboboxSelected>>",
                                   self._on_prefill_selected)
 
-        tk.Label(prefill_frame,
-                 text="Fills regulated grid fees & taxes (TURPE 7)",
-                 font=("Segoe UI", 7, "italic"),
-                 bg="#F0F4F8", fg="#888").pack(side=tk.LEFT, padx=8)
+        # Info label (updated after selection)
+        self._prefill_info_var = tk.StringVar(value="")
+        self._prefill_info_label = tk.Label(
+            prefill_frame, textvariable=self._prefill_info_var,
+            font=("Segoe UI", 8, "italic"),
+            bg="#F0F4F8", fg="#888", wraplength=400, justify=tk.LEFT)
+        self._prefill_info_label.pack(side=tk.LEFT, padx=8)
 
         # --- General ---
         sec_general = self._create_collapsible_section(form, "GENERAL")
         self._cf["contract_name"] = self._add_form_field(
             sec_general, "Contract Name:", "")
+        self._cf_widgets["contract_name"] = self._last_entry_widget
         self._cf["supplier"] = self._add_form_field(
             sec_general, "Supplier:", "")
+        self._cf_widgets["supplier"] = self._last_entry_widget
 
         country_frame = tk.Frame(sec_general, bg=COLORS["white"])
         country_frame.pack(fill=tk.X, pady=2, padx=10)
@@ -2450,6 +2471,7 @@ class EnergyParserGUI:
         self._cf["flat_price"] = self._add_form_field(
             sec_energy, "Flat Energy Price (\u20ac/kWh):", "0.10",
             tooltip="Fallback when no time-of-use periods match")
+        self._cf_widgets["flat_price"] = self._last_entry_widget
 
         # Time-of-use periods (collapsible sub-section)
         sec_periods = self._create_collapsible_section(
@@ -2477,15 +2499,19 @@ class EnergyParserGUI:
         self._cf["capacity_charge"] = self._add_form_field(
             sec_grid, "Capacity Charge (\u20ac/kW/yr):", "0",
             tooltip="Annual fee per kW of subscribed power")
+        self._cf_widgets["capacity_charge"] = self._last_entry_widget
         self._cf["subscribed_power"] = self._add_form_field(
             sec_grid, "Subscribed Power (kW):", "0",
             tooltip="Contracted peak demand (puissance souscrite)")
+        self._cf_widgets["subscribed_power"] = self._last_entry_widget
         self._cf["connection_limit"] = self._add_form_field(
             sec_grid, "Connection Limit (kW):", "0",
             tooltip="Physical connection limit (breaker size)")
+        self._cf_widgets["connection_limit"] = self._last_entry_widget
         self._cf["flat_grid_energy"] = self._add_form_field(
             sec_grid, "Flat Grid Energy (\u20ac/kWh):", "0",
             tooltip="Used if grid fees are NOT time-differentiated")
+        self._cf_widgets["flat_grid_energy"] = self._last_entry_widget
 
         td_frame = tk.Frame(sec_grid, bg=COLORS["white"])
         td_frame.pack(fill=tk.X, pady=2, padx=10)
@@ -2502,6 +2528,7 @@ class EnergyParserGUI:
         self._cf["overshoot_penalty"] = self._add_form_field(
             sec_grid, "Overshoot Penalty (\u20ac/kW):", "0",
             tooltip="Per kW exceeding reference power (monthly)")
+        self._cf_widgets["overshoot_penalty"] = self._last_entry_widget
 
         or_frame = tk.Frame(sec_grid, bg=COLORS["white"])
         or_frame.pack(fill=tk.X, pady=2, padx=10)
@@ -2517,24 +2544,30 @@ class EnergyParserGUI:
         self._cf["reactive_penalty"] = self._add_form_field(
             sec_grid, "Reactive Power (\u20ac/kvarh):", "0",
             tooltip="Penalty for poor cos(phi)")
+        self._cf_widgets["reactive_penalty"] = self._last_entry_widget
         self._cf["cos_phi"] = self._add_form_field(
             sec_grid, "cos(phi) Threshold:", "0.9",
             tooltip="Penalty applies below this value")
+        self._cf_widgets["cos_phi"] = self._last_entry_widget
 
         # --- Taxes ---
         sec_taxes = self._create_collapsible_section(form, "TAXES & LEVIES")
         self._cf["excise"] = self._add_form_field(
             sec_taxes, "Excise (\u20ac/kWh):", "0",
             tooltip="Accijnzen (BE) / Accise ex-TICFE (FR)")
+        self._cf_widgets["excise"] = self._last_entry_widget
         self._cf["renewable_levy"] = self._add_form_field(
             sec_taxes, "Renewable Levy (\u20ac/kWh):", "0",
             tooltip="Green certificate surcharge")
+        self._cf_widgets["renewable_levy"] = self._last_entry_widget
         self._cf["other_levies"] = self._add_form_field(
             sec_taxes, "Other Levies (\u20ac/kWh):", "0",
             tooltip="Federal contribution, CTA, etc.")
+        self._cf_widgets["other_levies"] = self._last_entry_widget
         self._cf["vat_rate"] = self._add_form_field(
             sec_taxes, "VAT Rate (decimal):", "0.21",
             tooltip="0.21 = 21%, 0.06 = 6%")
+        self._cf_widgets["vat_rate"] = self._last_entry_widget
 
         vat_frame = tk.Frame(sec_taxes, bg=COLORS["white"])
         vat_frame.pack(fill=tk.X, pady=2, padx=10)
@@ -2568,11 +2601,14 @@ class EnergyParserGUI:
         self._cf["technology"] = self._add_form_field(
             sec_prod, "Technology:", "PV",
             tooltip="PV, CHP, Wind, etc.")
+        self._cf_widgets["technology"] = self._last_entry_widget
         self._cf["installed_capacity"] = self._add_form_field(
             sec_prod, "Installed Capacity (kWp):", "0")
+        self._cf_widgets["installed_capacity"] = self._last_entry_widget
         self._cf["injection_tariff"] = self._add_form_field(
             sec_prod, "Injection Tariff (\u20ac/kWh):", "0",
             tooltip="Revenue per kWh injected into the grid")
+        self._cf_widgets["injection_tariff"] = self._last_entry_widget
 
         inj_idx_frame = tk.Frame(sec_prod, bg=COLORS["white"])
         inj_idx_frame.pack(fill=tk.X, pady=1, padx=10)
@@ -2619,6 +2655,7 @@ class EnergyParserGUI:
         self._cf["grid_fee_reduction"] = self._add_form_field(
             sec_prod, "Grid Fee Reduction (%):", "0",
             tooltip="% reduction on grid fees for self-consumed kWh")
+        self._cf_widgets["grid_fee_reduction"] = self._last_entry_widget
 
         gc_frame = tk.Frame(sec_prod, bg=COLORS["white"])
         gc_frame.pack(fill=tk.X, pady=1, padx=10)
@@ -2631,9 +2668,11 @@ class EnergyParserGUI:
         self._cf["gc_value"] = self._add_form_field(
             sec_prod, "Green Cert. Value (\u20ac/MWh):", "0",
             tooltip="Value per green certificate")
+        self._cf_widgets["gc_value"] = self._last_entry_widget
         self._cf["prosumer_tariff"] = self._add_form_field(
             sec_prod, "Prosumer Tariff (\u20ac/year):", "0",
             tooltip="Annual prosumer fee (Flanders)")
+        self._cf_widgets["prosumer_tariff"] = self._last_entry_widget
 
         # --- Penalties ---
         sec_penalties = self._create_collapsible_section(
@@ -2641,9 +2680,11 @@ class EnergyParserGUI:
         self._cf["min_offtake"] = self._add_form_field(
             sec_penalties, "Min. Offtake (kWh/year):", "0",
             tooltip="Minimum annual consumption")
+        self._cf_widgets["min_offtake"] = self._last_entry_widget
         self._cf["min_offtake_penalty"] = self._add_form_field(
             sec_penalties, "Min. Offtake Penalty (\u20ac/kWh):", "0",
             tooltip="Penalty per kWh below minimum")
+        self._cf_widgets["min_offtake_penalty"] = self._last_entry_widget
 
     def _create_collapsible_section(self, parent, title, initially_open=True):
         """Create a collapsible section. Returns the content frame."""
@@ -2701,8 +2742,10 @@ class EnergyParserGUI:
         tk.Label(row1, text="Price(\u20ac/kWh):", font=("Segoe UI", 8),
                  bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
         pv["price"] = tk.StringVar()
-        ttk.Entry(row1, textvariable=pv["price"], width=8,
-                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=2)
+        price_entry = ttk.Entry(row1, textvariable=pv["price"], width=8,
+                                font=("Segoe UI", 8))
+        price_entry.pack(side=tk.LEFT, padx=2)
+        pv["price_widget"] = price_entry
         tk.Label(row1, text="Grid(\u20ac/kWh):", font=("Segoe UI", 8),
                  bg=COLORS["bg"]).pack(side=tk.LEFT, padx=(8, 2))
         pv["grid_price"] = tk.StringVar()
@@ -2759,8 +2802,11 @@ class EnergyParserGUI:
                        font=("Segoe UI", 9), bg=COLORS["white"])
         lbl.pack(side=tk.LEFT)
         var = tk.StringVar(value=default)
-        ttk.Entry(row, textvariable=var, width=20,
-                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
+        entry_widget = ttk.Entry(row, textvariable=var, width=20,
+                                 font=("Segoe UI", 9))
+        entry_widget.pack(side=tk.LEFT, padx=5)
+        # Store last created entry widget for highlight tracking
+        self._last_entry_widget = entry_widget
         if tooltip:
             tip_lbl = tk.Label(row, text=tooltip, font=("Segoe UI", 7, "italic"),
                                bg=COLORS["white"], fg=COLORS["light_gray"])
@@ -2770,48 +2816,166 @@ class EnergyParserGUI:
     # --- Contract Database Methods ---
 
     def _load_contracts_db(self):
-        """Load the contracts database as a flat name→EnergyContract lookup."""
+        """Load the contracts database with tier and grouping info.
+
+        Builds:
+          _contracts_db_flat  — {name: EnergyContract}
+          _contracts_db_tier  — {name: "complete"|"partial"}
+          _contracts_db_groups — [(group_label, [names])] for dropdown
+        """
+        self._contracts_db_flat = {}
+        self._contracts_db_tier = {}
+        self._contracts_db_groups = []
+
         db_path = get_default_db_path()
-        if os.path.exists(db_path):
-            try:
-                hierarchy, metadata = load_contracts_db(db_path)
-                # Flatten: walk the country→region→name hierarchy
-                flat = {}
-                for country_contracts in hierarchy.values():
-                    for region_contracts in country_contracts.values():
-                        for name, contract in region_contracts.items():
-                            flat[name] = contract
-                self._contracts_db_flat = flat
-            except Exception:
-                self._contracts_db_flat = {}
+        if not os.path.exists(db_path):
+            return
+        try:
+            import json as _json
+            # Read raw JSON for tier field
+            with open(db_path, "r", encoding="utf-8") as f:
+                raw = _json.load(f)
+            tier_by_name = {}
+            for entry in raw.get("contracts", []):
+                tier_by_name[entry.get("contract_name", "")] = entry.get(
+                    "tier", "partial")
+
+            hierarchy, metadata = load_contracts_db(db_path)
+
+            # Flatten
+            flat = {}
+            for country_contracts in hierarchy.values():
+                for region_contracts in country_contracts.values():
+                    for name, contract in region_contracts.items():
+                        flat[name] = contract
+            self._contracts_db_flat = flat
+            self._contracts_db_tier = {
+                n: tier_by_name.get(n, "partial") for n in flat}
+
+            # Build grouped list: complete contracts first, then partial
+            complete_groups = []  # (group_label, [names])
+            partial_groups = []
+            for country, regions in hierarchy.items():
+                for region, contracts in regions.items():
+                    complete_names = [
+                        n for n in contracts
+                        if self._contracts_db_tier.get(n) == "complete"]
+                    partial_names = [
+                        n for n in contracts
+                        if self._contracts_db_tier.get(n) == "partial"]
+                    if complete_names:
+                        label = f"{country} — Regulated (complete)"
+                        complete_groups.append((label, complete_names))
+                    if partial_names:
+                        label = f"{country} {region} — Grid & Taxes only"
+                        partial_groups.append((label, partial_names))
+            self._contracts_db_groups = complete_groups + partial_groups
+        except Exception:
+            self._contracts_db_flat = {}
+            self._contracts_db_tier = {}
+            self._contracts_db_groups = []
 
     def _on_prefill_selected(self, event):
         """Handle pre-fill dropdown selection inside the manual contract form."""
         selected = self._prefill_var.get()
         if not selected or selected.startswith("(blank"):
+            self._apply_field_highlights(None)
+            self._prefill_info_var.set("")
             return
-        contract = self._contracts_db_flat.get(selected)
+        # Reject separator headers
+        if selected.startswith("\u2500\u2500"):
+            self._prefill_combo.set("")
+            return
+        # Look up real name and tier from the display map
+        mapping = self._prefill_name_map.get(selected)
+        if not mapping:
+            return
+        real_name, tier = mapping
+        contract = self._contracts_db_flat.get(real_name)
         if contract:
-            self._populate_manual_form(contract)
+            skip_energy = (tier == "partial")
+            self._populate_manual_form(contract, skip_energy_prices=skip_energy)
+            self._apply_field_highlights(tier)
+            # Update info label
+            if tier == "complete":
+                self._prefill_info_var.set(
+                    "\u2705 All fields pre-filled with French regulated "
+                    "tariff (TRV). Ready to simulate.")
+                self._prefill_info_label.config(fg=COLORS["success"])
+            else:
+                self._prefill_info_var.set(
+                    "\u26A0 Please enter your energy prices \u2014 check "
+                    "your electricity bill or supplier contract.")
+                self._prefill_info_label.config(fg=COLORS["warning"])
+
+    # --- Field Highlight Methods ---
+
+    _ENERGY_PRICE_KEYS = {"flat_price", "supplier"}
+
+    def _apply_field_highlights(self, tier):
+        """Apply green/yellow background highlights to form entry widgets.
+
+        tier="complete": all fields → green
+        tier="partial": energy price fields → yellow, others → green
+        tier=None: reset all to default
+        """
+        if not hasattr(self, '_cf_widgets'):
+            return
+        for key, widget in self._cf_widgets.items():
+            try:
+                if tier is None:
+                    widget.configure(style="TEntry")
+                elif tier == "complete":
+                    widget.configure(style="Green.TEntry")
+                else:  # partial
+                    if key in self._ENERGY_PRICE_KEYS:
+                        widget.configure(style="Yellow.TEntry")
+                    else:
+                        widget.configure(style="Green.TEntry")
+            except (tk.TclError, AttributeError):
+                pass
+        # Period price widgets
+        for pv in self._cf.get("periods", []):
+            pw = pv.get("price_widget")
+            if pw is None:
+                continue
+            try:
+                if tier is None:
+                    pw.configure(style="TEntry")
+                elif tier == "complete":
+                    pw.configure(style="Green.TEntry")
+                else:
+                    pw.configure(style="Yellow.TEntry")
+            except (tk.TclError, AttributeError):
+                pass
 
     # --- Manual Contract Methods ---
 
-    def _populate_manual_form(self, contract: EnergyContract):
-        """Populate the manual form from an EnergyContract."""
+    def _populate_manual_form(self, contract: EnergyContract,
+                             skip_energy_prices=False):
+        """Populate the manual form from an EnergyContract.
+
+        If skip_energy_prices=True, supplier, flat_price, and period
+        energy prices are left blank (user must fill them in).
+        """
         cf = self._cf
         cf["contract_name"].set(contract.contract_name)
-        cf["supplier"].set(contract.supplier)
+        cf["supplier"].set("" if skip_energy_prices else contract.supplier)
         cf["country"].set(contract.country.value)
         cf["voltage_level"].set(contract.voltage_level.value)
         cf["price_type"].set(contract.energy.price_type.value)
-        cf["flat_price"].set(str(contract.energy.flat_price_eur_per_kwh))
+        cf["flat_price"].set(
+            "" if skip_energy_prices
+            else str(contract.energy.flat_price_eur_per_kwh))
 
         # Time periods
         for i, pv in enumerate(cf["periods"]):
             if i < len(contract.energy.time_periods):
                 tp = contract.energy.time_periods[i]
                 pv["name"].set(tp.name)
-                pv["price"].set(str(tp.price_eur_per_kwh))
+                pv["price"].set(
+                    "" if skip_energy_prices
+                    else str(tp.price_eur_per_kwh))
                 pv["grid_price"].set(str(tp.grid_energy_eur_per_kwh))
                 pv["start_h"].set(str(tp.start_time.hour))
                 pv["end_h"].set(str(tp.end_time.hour))
@@ -3027,6 +3191,24 @@ class EnergyParserGUI:
         if self.cost_contract is None:
             messagebox.showwarning("Warning",
                                    "Please define a contract first (Edit Contract).")
+            return
+
+        # Check that at least one energy price is non-zero
+        contract = self.cost_contract
+        has_energy_price = False
+        if contract.energy.time_periods:
+            has_energy_price = any(
+                tp.price_eur_per_kwh > 0
+                for tp in contract.energy.time_periods)
+        else:
+            has_energy_price = contract.energy.flat_price_eur_per_kwh > 0
+        if not has_energy_price:
+            messagebox.showwarning(
+                "Missing Energy Prices",
+                "Cannot simulate: all energy prices are zero.\n\n"
+                "Please enter your energy prices in the contract editor.\n"
+                "You can find them on your electricity bill or supplier "
+                "contract.")
             return
 
         self.update_progress(10, "Preparing cost simulation...")
