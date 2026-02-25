@@ -184,19 +184,22 @@ def _determine_offer_a(sc: FeasibilityScorecard) -> tuple:
     """Determine Offer A (Grid Constraint / Leasing) relevance.
 
     Returns (relevance_level, rationale).
+    Connection power gate is skipped when the value is not set (0).
     """
     grid_util = sc.grid_utilization_pct
     headroom = sc.headroom_kw
     conn_kw = sc.connection_power_kw
+    # If connection power is not set, don't let it block the assessment
+    conn_ok = (conn_kw >= 30) if conn_kw > 0 else True
 
-    if (grid_util > 85 and headroom < 30 and conn_kw >= 30):
+    if (grid_util > 85 and headroom < 30 and conn_ok):
         return ("High", (
             f"Grid utilization is critically high at {grid_util:.1f}% "
             f"with only {headroom:.1f} kW of headroom. "
             f"A battery system can shave peaks and prevent overshoots, "
             f"avoiding costly grid upgrades or penalty charges."
         ))
-    elif ((grid_util > 70 or headroom < 100) and conn_kw >= 30):
+    elif ((grid_util > 70 or headroom < 100) and conn_ok):
         return ("Medium", (
             f"Grid utilization ({grid_util:.1f}%) and headroom "
             f"({headroom:.1f} kW) suggest moderate grid stress. "
@@ -205,7 +208,7 @@ def _determine_offer_a(sc: FeasibilityScorecard) -> tuple:
         ))
     else:
         return ("Low", (
-            f"Grid utilization is comfortable at {grid_util:.1f}% "
+            f"Grid utilization is low at {grid_util:.1f}% "
             f"with {headroom:.1f} kW of headroom. "
             f"Peak shaving via Offer A is not a priority at this time."
         ))
@@ -215,12 +218,16 @@ def _determine_offer_b(sc: FeasibilityScorecard) -> tuple:
     """Determine Offer B (Joint Valorisation / BaaS) relevance.
 
     Returns (relevance_level, rationale).
+    Connection power gate is skipped when the value is not set (0).
     """
     avail_cap = sc.available_capacity_kw
     load_factor = sc.load_factor_pct
     conn_kw = sc.connection_power_kw
+    # If connection power is not set, don't let it block the assessment
+    conn_high = (conn_kw >= 800) if conn_kw > 0 else True
+    conn_med = (conn_kw >= 250) if conn_kw > 0 else True
 
-    if (avail_cap > 500 and load_factor < 30 and conn_kw >= 800):
+    if (avail_cap > 500 and load_factor < 30 and conn_high):
         return ("High", (
             f"The site has {avail_cap:.0f} kW of available capacity "
             f"and a low load factor ({load_factor:.1f}%), indicating "
@@ -229,7 +236,7 @@ def _determine_offer_b(sc: FeasibilityScorecard) -> tuple:
             f"through ancillary services and arbitrage."
         ))
     elif ((200 <= avail_cap <= 500 or 30 <= load_factor <= 50)
-          and conn_kw >= 250):
+          and conn_med):
         return ("Medium", (
             f"Available capacity ({avail_cap:.0f} kW) and load factor "
             f"({load_factor:.1f}%) show moderate potential for grid "
