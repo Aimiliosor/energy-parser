@@ -1162,9 +1162,17 @@ class EnergyParserGUI:
                                        foreground=COLORS["text_dark"])
         self.stats_text.config(state=tk.DISABLED)
 
-        # Chart display frame
+        # Chart toggle button + collapsible container
+        self._stats_charts_visible = False
+        self._stats_chart_toggle_btn = ModernButton(
+            content, "Show Charts \u25B6",
+            command=self._toggle_stats_charts,
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=140, height=30)
+        # Not packed yet — shown only after charts are generated
+
         self.chart_frame = tk.Frame(content, bg=COLORS["white"])
-        self.chart_frame.pack(fill=tk.X, pady=5)
+        # Not packed — toggled by button
 
         # Keep references to chart images to prevent GC
         self._chart_images = []
@@ -1181,6 +1189,19 @@ class EnergyParserGUI:
         self._chart_images.append(photo)
         label = tk.Label(self.chart_frame, image=photo, bg=COLORS["white"])
         label.pack(pady=3)
+
+    def _toggle_stats_charts(self):
+        """Toggle visibility of energy analysis charts."""
+        if self._stats_charts_visible:
+            self.chart_frame.pack_forget()
+            self._stats_chart_toggle_btn.text = "Show Charts \u25B6"
+            self._stats_chart_toggle_btn.draw_button()
+            self._stats_charts_visible = False
+        else:
+            self.chart_frame.pack(fill=tk.X, pady=5)
+            self._stats_chart_toggle_btn.text = "Hide Charts \u25BC"
+            self._stats_chart_toggle_btn.draw_button()
+            self._stats_charts_visible = True
 
     def _stats_select_all(self):
         for var in self.stat_vars.values():
@@ -1402,12 +1423,18 @@ class EnergyParserGUI:
         self.stats_text.config(state=tk.DISABLED)
 
     def _display_stats_charts(self):
-        """Render statistical charts from self.stats_result and self.stat_vars."""
+        """Render statistical charts into chart_frame (hidden by default)."""
         selected = [k for k, v in self.stat_vars.items() if v.get()]
 
         self._chart_images.clear()
         for w in self.chart_frame.winfo_children():
             w.destroy()
+
+        # Collapse charts and reset toggle
+        self.chart_frame.pack_forget()
+        self._stats_charts_visible = False
+        self._stats_chart_toggle_btn.text = "Show Charts \u25B6"
+        self._stats_chart_toggle_btn.draw_button()
 
         if "monthly_totals" in selected:
             yearly = self.stats_result.get("yearly", {})
@@ -1501,6 +1528,12 @@ class EnergyParserGUI:
                     continue
                 chart_bytes = generate_peak_hour_frequency_chart(ph_data, col_name)
                 self._display_chart(chart_bytes)
+
+        # Show toggle button if any charts were generated
+        if self._chart_images:
+            self._stats_chart_toggle_btn.pack(anchor=tk.W, pady=(8, 0))
+        else:
+            self._stats_chart_toggle_btn.pack_forget()
 
     # ============ Report Dialog & Generation ============
 
@@ -2282,9 +2315,17 @@ class EnergyParserGUI:
         self.cost_results_frame = tk.Frame(content, bg=COLORS["white"])
         self.cost_results_frame.pack(fill=tk.X, pady=5)
 
-        # Chart display frame for cost simulation
+        # Chart toggle button + collapsible container for cost charts
+        self._cost_charts_visible = False
+        self._cost_chart_toggle_btn = ModernButton(
+            content, "Show Charts \u25B6",
+            command=self._toggle_cost_charts,
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=140, height=30)
+        # Not packed yet — shown only after charts are generated
+
         self.cost_chart_frame = tk.Frame(content, bg=COLORS["white"])
-        self.cost_chart_frame.pack(fill=tk.X, pady=5)
+        # Not packed — toggled by button
         self._cost_chart_images = []
 
         # Battery link
@@ -3383,12 +3424,33 @@ class EnergyParserGUI:
                          row=row, column=1, sticky=tk.E,
                          padx=(20, 0), pady=2)
 
+    def _toggle_cost_charts(self):
+        """Toggle visibility of cost simulation charts."""
+        if self._cost_charts_visible:
+            self.cost_chart_frame.pack_forget()
+            self._cost_chart_toggle_btn.text = "Show Charts \u25B6"
+            self._cost_chart_toggle_btn.draw_button()
+            self._cost_charts_visible = False
+        else:
+            # Pack before the battery link frame
+            self.cost_chart_frame.pack(fill=tk.X, pady=5,
+                                       before=self.battery_link_frame)
+            self._cost_chart_toggle_btn.text = "Hide Charts \u25BC"
+            self._cost_chart_toggle_btn.draw_button()
+            self._cost_charts_visible = True
+
     def _display_cost_charts(self, summary: CostBreakdown,
                               monthly: dict):
-        """Generate and display cost simulation charts."""
+        """Generate cost simulation charts (hidden by default)."""
         self._cost_chart_images.clear()
         for w in self.cost_chart_frame.winfo_children():
             w.destroy()
+
+        # Collapse charts and reset toggle
+        self.cost_chart_frame.pack_forget()
+        self._cost_charts_visible = False
+        self._cost_chart_toggle_btn.text = "Show Charts \u25B6"
+        self._cost_chart_toggle_btn.draw_button()
 
         # Prepare summary dict for chart functions
         summary_dict = {
@@ -3429,6 +3491,13 @@ class EnergyParserGUI:
             label = tk.Label(self.cost_chart_frame, image=photo,
                              bg=COLORS["white"])
             label.pack(pady=3)
+
+        # Show toggle button if any charts were generated
+        if self._cost_chart_images:
+            self._cost_chart_toggle_btn.pack(anchor=tk.W, pady=(8, 0),
+                                             before=self.battery_link_frame)
+        else:
+            self._cost_chart_toggle_btn.pack_forget()
 
     def _show_battery_link(self, summary: CostBreakdown):
         """Show link to battery dimensioning after cost simulation."""
@@ -4656,6 +4725,9 @@ class EnergyParserGUI:
         self._chart_images.clear()
         for w in self.chart_frame.winfo_children():
             w.destroy()
+        self.chart_frame.pack_forget()
+        self._stats_chart_toggle_btn.pack_forget()
+        self._stats_charts_visible = False
 
         # KPI
         for w in self.kpi_frame.winfo_children():
@@ -4685,6 +4757,9 @@ class EnergyParserGUI:
         self._cost_chart_images.clear()
         for w in self.cost_chart_frame.winfo_children():
             w.destroy()
+        self.cost_chart_frame.pack_forget()
+        self._cost_chart_toggle_btn.pack_forget()
+        self._cost_charts_visible = False
         for w in self.battery_link_frame.winfo_children():
             w.destroy()
 
