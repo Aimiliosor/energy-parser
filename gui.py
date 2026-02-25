@@ -58,6 +58,13 @@ from energy_parser.contract_model import (
 )
 from energy_parser.cost_simulator import CostSimulator, CostBreakdown
 from energy_parser.exporter import save_cost_simulation_xlsx
+from energy_parser.feasibility import (
+    run_feasibility_analysis, FeasibilityScorecard, scorecard_to_dict,
+)
+from energy_parser.report_generator import (
+    generate_load_duration_curve, generate_utilization_profile,
+    generate_overshoot_histogram,
+)
 from spartacus_project import (
     save_project, load_project,
     serialize_quality_report, deserialize_quality_report,
@@ -233,6 +240,7 @@ class EnergyParserGUI:
         self.cost_simulation_result = None  # (detail_df, summary, monthly)
         self.cost_contract = None           # Current EnergyContract
         self._contracts_db_flat = {}        # Flat name→EnergyContract lookup
+        self.feasibility_result = None      # FeasibilityScorecard
 
         # Project state
         self._project_path = None
@@ -498,6 +506,7 @@ class EnergyParserGUI:
         self.create_statistics_section()
         self.create_battery_section()
         self.create_cost_simulation_section()
+        self.create_feasibility_section()
         self.create_tools_section()
 
         # Initial background update
@@ -1593,6 +1602,7 @@ class EnergyParserGUI:
                      bool(self.stats_result.get("peaks", {})))
         has_battery = self.battery_result is not None
         has_cost = self.cost_simulation_result is not None
+        has_feasibility = self.feasibility_result is not None
 
         section_defs = [
             ("data_overview",
@@ -1619,6 +1629,10 @@ class EnergyParserGUI:
              "Energy Cost Estimation",
              "Cost breakdown, monthly costs, pie chart",
              has_cost),
+            ("feasibility",
+             "Feasibility Analysis",
+             "Grid utilization scorecard, offer relevance, recommendation",
+             has_feasibility),
         ]
 
         section_vars = {}
@@ -1849,6 +1863,29 @@ class EnergyParserGUI:
                 except Exception:
                     pass
 
+            # Feasibility report data
+            feasibility_report_data = None
+            if ("feasibility" in selected_sections
+                    and self.feasibility_result is not None):
+                try:
+                    sc = self.feasibility_result
+                    feas_dict = scorecard_to_dict(sc)
+                    # Generate charts for PDF
+                    feas_dict["charts"] = {
+                        "load_duration": generate_load_duration_curve(
+                            sc.sorted_demand_kw,
+                            sc.subscribed_power_kw,
+                            sc.connection_power_kw),
+                        "utilization": generate_utilization_profile(
+                            sc.demand_timeseries,
+                            sc.subscribed_power_kw),
+                        "overshoot_hist": generate_overshoot_histogram(
+                            sc.overshoot_values),
+                    }
+                    feasibility_report_data = feas_dict
+                except Exception:
+                    pass
+
             # Build common kwargs for generate_pdf_report
             pdf_kwargs = dict(
                 sections=selected_sections,
@@ -1864,6 +1901,7 @@ class EnergyParserGUI:
                 battery_data=battery_report_data,
                 cost_simulation_data=cost_sim_report_data,
                 data_overview=data_overview,
+                feasibility_data=feasibility_report_data,
             )
 
             # Try to remove existing file first (avoids OneDrive lock)
@@ -3599,9 +3637,289 @@ class EnergyParserGUI:
             messagebox.showerror("Error",
                                  f"Excel export failed:\n{str(e)}")
 
+    # ================================================================
+    # Section 11 — Feasibility Analysis
+    # ================================================================
+
+    def create_feasibility_section(self):
+        """Create the feasibility analysis section."""
+        content = self.create_card(self.content_frame,
+                                   "11. Feasibility Analysis")
+
+        tk.Label(
+            content,
+            text=("Evaluate grid utilization and get recommendations for "
+                  "ReVolta's battery offers based on your site's load profile."),
+            font=("Segoe UI", 9), bg=COLORS["white"],
+            fg=COLORS["light_gray"], wraplength=700, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        btn_row = tk.Frame(content, bg=COLORS["white"])
+        btn_row.pack(fill=tk.X, pady=(0, 5))
+
+        ModernButton(
+            btn_row, "Run Feasibility Analysis",
+            command=self._run_feasibility,
+            bg=COLORS["secondary"], width=230, height=40,
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Results frame
+        self.feas_results_frame = tk.Frame(content, bg=COLORS["white"])
+        self.feas_results_frame.pack(fill=tk.X, pady=5)
+
+        # Chart toggle button + collapsible container
+        self._feas_charts_visible = False
+        self._feas_chart_toggle_btn = ModernButton(
+            content, "Show Details \u25B6",
+            command=self._toggle_feas_charts,
+            bg=COLORS["light_gray"], fg=COLORS["primary"],
+            width=140, height=30)
+        # Not packed yet — shown after charts generated
+
+        self.feas_chart_frame = tk.Frame(content, bg=COLORS["white"])
+        self._feas_chart_images = []
+
+    def _run_feasibility(self):
+        """Run feasibility analysis with current data and contract."""
+        if self.transformed_df is None:
+            messagebox.showwarning(
+                "Warning", "Please transform data first (Step 5).")
+            return
+        if self.cost_contract is None:
+            messagebox.showwarning(
+                "Warning", "Please define a contract first (Section 10).")
+            return
+        if self.cost_contract.grid.subscribed_power_kw <= 0:
+            messagebox.showwarning(
+                "Warning",
+                "Subscribed power must be > 0 in the contract.\n"
+                "Please edit your contract and set the subscribed power.")
+            return
+
+        self.update_progress(10, "Running feasibility analysis...")
+
+        try:
+            # Get optional cost summary
+            cost_summary = None
+            if self.cost_simulation_result is not None:
+                _, cost_summary, _ = self.cost_simulation_result
+
+            sc = run_feasibility_analysis(
+                df=self.transformed_df,
+                contract=self.cost_contract,
+                hours_per_interval=self.hours_per_interval,
+                cost_summary=cost_summary,
+            )
+            self.feasibility_result = sc
+
+            self.update_progress(50, "Displaying results...")
+            self._display_feasibility_results()
+
+            self.update_progress(80, "Generating charts...")
+            self._display_feasibility_charts()
+
+            self.update_progress(100, "Feasibility analysis complete!")
+            self._mark_dirty()
+
+        except Exception as e:
+            self.update_progress(0, "Feasibility analysis failed")
+            messagebox.showerror(
+                "Error", f"Feasibility analysis failed:\n{str(e)}")
+
+    def _display_feasibility_results(self):
+        """Display feasibility scorecard, offer relevance, and recommendation."""
+        sc = self.feasibility_result
+        if sc is None:
+            return
+
+        # Clear previous results
+        for w in self.feas_results_frame.winfo_children():
+            w.destroy()
+
+        parent = self.feas_results_frame
+
+        # --- Scorecard ---
+        sc_frame = tk.Frame(parent, bg=COLORS["white"], bd=1,
+                            relief=tk.SOLID)
+        sc_frame.pack(fill=tk.X, pady=(0, 8))
+
+        # Title bar
+        title_bar = tk.Frame(sc_frame, bg=COLORS["primary"])
+        title_bar.pack(fill=tk.X)
+        tk.Label(title_bar, text="FEASIBILITY SCORECARD",
+                 font=("Segoe UI", 10, "bold"),
+                 bg=COLORS["primary"], fg=COLORS["white"],
+                 padx=10, pady=5).pack(side=tk.LEFT)
+
+        # Metric grid
+        grid_frame = tk.Frame(sc_frame, bg=COLORS["white"])
+        grid_frame.pack(fill=tk.X, padx=10, pady=8)
+
+        color_map = {
+            "green": "#28A745", "orange": "#FFC107",
+            "red": "#EC465D", "gray": "#B4BCD6",
+        }
+
+        metrics = [
+            ("grid_utilization_pct", "Grid Utilization",
+             f"{sc.grid_utilization_pct:.1f}%"),
+            ("headroom_kw", "Headroom",
+             f"{sc.headroom_kw:.1f} kW"),
+            ("overshoot_count", "Overshoot Count",
+             f"{sc.overshoot_count}"),
+            ("max_overshoot_kw", "Max Overshoot",
+             f"{sc.max_overshoot_kw:.1f} kW"),
+            ("available_capacity_kw", "Available Capacity",
+             f"{sc.available_capacity_kw:.0f} kW"),
+            ("load_factor_pct", "Load Factor",
+             f"{sc.load_factor_pct:.1f}%"),
+            ("peak_concentration_pct", "Peak Concentration",
+             f"{sc.peak_concentration_pct:.1f}%"),
+            ("self_consumption_rate_pct", "Self-Consumption Rate",
+             f"{sc.self_consumption_rate_pct:.1f}%"),
+        ]
+
+        for row_idx, (key, label, value_str) in enumerate(metrics):
+            tl_color = sc.traffic_lights.get(key, "gray")
+            hex_color = color_map.get(tl_color, "#B4BCD6")
+
+            tk.Label(grid_frame, text="\u25CF", font=("Segoe UI", 14),
+                     bg=COLORS["white"], fg=hex_color).grid(
+                         row=row_idx, column=0, padx=(0, 8), sticky="w")
+            tk.Label(grid_frame, text=label, font=("Segoe UI", 9),
+                     bg=COLORS["white"], fg=COLORS["text_dark"]).grid(
+                         row=row_idx, column=1, padx=(0, 20), sticky="w")
+            tk.Label(grid_frame, text=value_str,
+                     font=("Segoe UI", 9, "bold"),
+                     bg=COLORS["white"], fg=hex_color).grid(
+                         row=row_idx, column=2, sticky="e")
+
+        # --- Offer boxes (2 columns) ---
+        offers_frame = tk.Frame(parent, bg=COLORS["white"])
+        offers_frame.pack(fill=tk.X, pady=(0, 8))
+        offers_frame.columnconfigure(0, weight=1)
+        offers_frame.columnconfigure(1, weight=1)
+
+        relevance_colors = {
+            "High": "#28A745", "Medium": "#FFC107", "Low": "#B4BCD6",
+        }
+
+        for col_idx, (offer_name, rel_level, rationale) in enumerate([
+            ("Offer A: Grid Constraint / Leasing",
+             sc.offer_a_relevance, sc.offer_a_rationale),
+            ("Offer B: Joint Valorisation / BaaS",
+             sc.offer_b_relevance, sc.offer_b_rationale),
+        ]):
+            rel_color = relevance_colors.get(rel_level, "#B4BCD6")
+
+            box = tk.Frame(offers_frame, bg=COLORS["white"], bd=1,
+                           relief=tk.SOLID, highlightbackground=rel_color,
+                           highlightthickness=2)
+            box.grid(row=0, column=col_idx, padx=5, sticky="nsew")
+
+            # Colored top bar
+            top_bar = tk.Frame(box, bg=rel_color)
+            top_bar.pack(fill=tk.X)
+            tk.Label(top_bar, text=offer_name,
+                     font=("Segoe UI", 9, "bold"),
+                     bg=rel_color, fg=COLORS["white"],
+                     padx=8, pady=4).pack(side=tk.LEFT)
+
+            # Relevance text
+            tk.Label(box, text=f"Relevance: {rel_level}",
+                     font=("Segoe UI", 14, "bold"),
+                     bg=COLORS["white"], fg=rel_color,
+                     padx=10, pady=5).pack(anchor="w")
+
+            # Rationale
+            tk.Label(box, text=rationale,
+                     font=("Segoe UI", 8), bg=COLORS["white"],
+                     fg=COLORS["text_dark"], wraplength=320,
+                     justify=tk.LEFT, padx=10, pady=(0, 8)).pack(
+                         anchor="w", fill=tk.X)
+
+        # --- Recommendation ---
+        rec_frame = tk.Frame(parent, bg=COLORS["white"], bd=1,
+                             relief=tk.SOLID)
+        rec_frame.pack(fill=tk.X, pady=(0, 5))
+
+        rec_bar = tk.Frame(rec_frame, bg=COLORS["primary"])
+        rec_bar.pack(fill=tk.X)
+        tk.Label(rec_bar, text="RECOMMENDATION",
+                 font=("Segoe UI", 10, "bold"),
+                 bg=COLORS["primary"], fg=COLORS["white"],
+                 padx=10, pady=5).pack(side=tk.LEFT)
+
+        rec_text = tk.Text(rec_frame, height=8, width=100,
+                           font=("Segoe UI", 9), bg=COLORS["bg"],
+                           fg=COLORS["text_dark"], relief=tk.FLAT,
+                           padx=10, pady=10, wrap=tk.WORD)
+        rec_text.pack(fill=tk.X)
+        rec_text.insert(tk.END, sc.recommendation)
+        rec_text.config(state=tk.DISABLED)
+
+    def _display_feasibility_charts(self):
+        """Generate feasibility charts (hidden by default)."""
+        sc = self.feasibility_result
+        if sc is None:
+            return
+
+        self._feas_chart_images.clear()
+        for w in self.feas_chart_frame.winfo_children():
+            w.destroy()
+
+        charts = [
+            ("Load Duration Curve",
+             generate_load_duration_curve(
+                 sc.sorted_demand_kw,
+                 sc.subscribed_power_kw,
+                 sc.connection_power_kw)),
+            ("Grid Utilization Profile",
+             generate_utilization_profile(
+                 sc.demand_timeseries,
+                 sc.subscribed_power_kw)),
+            ("Overshoot Distribution",
+             generate_overshoot_histogram(sc.overshoot_values)),
+        ]
+
+        for title, png_bytes in charts:
+            img = Image.open(io.BytesIO(png_bytes))
+            # Resize to fit
+            max_w = 750
+            ratio = max_w / img.width
+            new_h = int(img.height * ratio)
+            img = img.resize((max_w, new_h), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._feas_chart_images.append(photo)
+
+            lbl = tk.Label(self.feas_chart_frame, image=photo,
+                           bg=COLORS["white"])
+            lbl.pack(pady=5)
+
+        # Show toggle button
+        self._feas_chart_toggle_btn.pack(anchor=tk.W, padx=5, pady=5)
+        self._feas_charts_visible = False
+
+    def _toggle_feas_charts(self):
+        """Toggle visibility of feasibility charts."""
+        if self._feas_charts_visible:
+            self.feas_chart_frame.pack_forget()
+            self._feas_chart_toggle_btn.text = "Show Details \u25B6"
+            self._feas_chart_toggle_btn.draw_button()
+            self._feas_charts_visible = False
+        else:
+            self.feas_chart_frame.pack(fill=tk.X, pady=5)
+            self._feas_chart_toggle_btn.text = "Hide Details \u25BC"
+            self._feas_chart_toggle_btn.draw_button()
+            self._feas_charts_visible = True
+
+    # ================================================================
+    # Section 12 — Developer Tools
+    # ================================================================
+
     def create_tools_section(self):
         """Create the tools section with CLI and Claude Code buttons."""
-        content = self.create_card(self.content_frame, "11. Developer Tools")
+        content = self.create_card(self.content_frame, "12. Developer Tools")
 
         tools_row = tk.Frame(content, bg=COLORS["white"])
         tools_row.pack(fill=tk.X)
@@ -4449,6 +4767,8 @@ class EnergyParserGUI:
                 self.cost_simulation_result,
                 self.cost_contract,
                 None)
+        if self.feasibility_result is not None:
+            results["feasibility"] = scorecard_to_dict(self.feasibility_result)
         state["results"] = results
 
         return state
@@ -4661,6 +4981,20 @@ class EnergyParserGUI:
                             self.cost_simulation_result = None
                             pass
 
+            # Feasibility analysis
+            feas_data = results.get("feasibility")
+            if feas_data and isinstance(feas_data, dict):
+                try:
+                    sc = FeasibilityScorecard(**{
+                        k: v for k, v in feas_data.items()
+                        if k in FeasibilityScorecard.__dataclass_fields__
+                    })
+                    self.feasibility_result = sc
+                    self._display_feasibility_results()
+                    self._display_feasibility_charts()
+                except Exception:
+                    self.feasibility_result = None
+
         finally:
             self._restoring = False
 
@@ -4680,6 +5014,7 @@ class EnergyParserGUI:
         self.battery_result = None
         self.cost_simulation_result = None
         self.cost_contract = None
+        self.feasibility_result = None
         self._battery_sizer = None if hasattr(self, '_battery_sizer') else None
 
         # StringVars
@@ -4762,6 +5097,16 @@ class EnergyParserGUI:
         self._cost_charts_visible = False
         for w in self.battery_link_frame.winfo_children():
             w.destroy()
+
+        # Feasibility
+        for w in self.feas_results_frame.winfo_children():
+            w.destroy()
+        self._feas_chart_images.clear()
+        for w in self.feas_chart_frame.winfo_children():
+            w.destroy()
+        self.feas_chart_frame.pack_forget()
+        self._feas_chart_toggle_btn.pack_forget()
+        self._feas_charts_visible = False
 
         # Progress
         self.progress_var.set(0)

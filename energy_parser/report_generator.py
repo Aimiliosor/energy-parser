@@ -951,6 +951,153 @@ def generate_scenario_comparison_chart(comparison_data: list[dict]) -> bytes:
     return buf.read()
 
 
+# ---------------------------------------------------------------------------
+# Feasibility Analysis Charts
+# ---------------------------------------------------------------------------
+
+def generate_load_duration_curve(sorted_demand: list,
+                                  subscribed_power_kw: float,
+                                  connection_power_kw: float) -> bytes:
+    """Render a load duration curve as a PNG in memory.
+
+    X-axis: % of time (0-100). Y-axis: power (kW).
+    Filled area for sorted demand, dashed lines for subscribed/connection limits.
+    Returns PNG bytes.
+    """
+    n = len(sorted_demand)
+    if n == 0:
+        fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+        ax.text(0.5, 0.5, "No demand data", ha="center", va="center")
+        ax.set_axis_off()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
+    x_pct = np.linspace(0, 100, n)
+
+    fig, ax = plt.subplots(figsize=(9, 4.5), dpi=120)
+
+    ax.fill_between(x_pct, sorted_demand, alpha=0.35, color=BRAND_PRIMARY)
+    ax.plot(x_pct, sorted_demand, color=BRAND_PRIMARY, linewidth=1.2,
+            label="Net Demand")
+
+    if subscribed_power_kw > 0:
+        ax.axhline(y=subscribed_power_kw, color=BRAND_SECONDARY,
+                    linestyle="--", linewidth=1.5,
+                    label=f"Subscribed Power ({subscribed_power_kw:.0f} kW)")
+    if connection_power_kw > 0:
+        ax.axhline(y=connection_power_kw, color="#FF8C00",
+                    linestyle="--", linewidth=1.5,
+                    label=f"Connection Limit ({connection_power_kw:.0f} kW)")
+
+    ax.set_xlabel("% of Time", fontsize=9)
+    ax.set_ylabel("Power (kW)", fontsize=9)
+    ax.set_title("Load Duration Curve", fontsize=12,
+                 fontweight="bold", color=BRAND_PRIMARY)
+    ax.set_xlim(0, 100)
+    ax.set_ylim(bottom=0)
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_utilization_profile(demand_timeseries: list,
+                                  subscribed_power_kw: float) -> bytes:
+    """Render a demand vs subscribed power overlay as a PNG in memory.
+
+    demand_timeseries: list of (timestamp_str, kw) tuples.
+    Red fill for overshoot zone.
+    Returns PNG bytes.
+    """
+    if not demand_timeseries:
+        fig, ax = plt.subplots(figsize=(9, 4), dpi=120)
+        ax.text(0.5, 0.5, "No timeseries data", ha="center", va="center")
+        ax.set_axis_off()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
+    timestamps = [pd.Timestamp(t) for t, _ in demand_timeseries]
+    values = [v for _, v in demand_timeseries]
+
+    fig, ax = plt.subplots(figsize=(10, 4.5), dpi=120)
+
+    ax.plot(timestamps, values, color=BRAND_PRIMARY, linewidth=0.6,
+            alpha=0.8, label="Net Demand")
+
+    if subscribed_power_kw > 0:
+        ax.axhline(y=subscribed_power_kw, color=BRAND_SECONDARY,
+                    linestyle="--", linewidth=1.5,
+                    label=f"Subscribed ({subscribed_power_kw:.0f} kW)")
+        # Red fill for overshoot zone
+        values_arr = np.array(values)
+        sub_arr = np.full_like(values_arr, subscribed_power_kw)
+        ax.fill_between(timestamps, values_arr, sub_arr,
+                        where=(values_arr > subscribed_power_kw),
+                        color=BRAND_SECONDARY, alpha=0.3,
+                        label="Overshoot Zone")
+
+    ax.set_xlabel("Time", fontsize=9)
+    ax.set_ylabel("Power (kW)", fontsize=9)
+    ax.set_title("Grid Utilization Profile", fontsize=12,
+                 fontweight="bold", color=BRAND_PRIMARY)
+    ax.set_ylim(bottom=0)
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.autofmt_xdate(rotation=30)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_overshoot_histogram(overshoot_values: list) -> bytes:
+    """Render a histogram of overshoot magnitudes as a PNG in memory.
+
+    overshoot_values: list of positive kW exceedance values.
+    Shows 'No overshoots detected' if empty.
+    Returns PNG bytes.
+    """
+    fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+
+    if not overshoot_values:
+        ax.text(0.5, 0.5, "No overshoots detected",
+                ha="center", va="center", fontsize=14,
+                color="#28A745", fontweight="bold")
+        ax.set_axis_off()
+        ax.set_title("Overshoot Distribution", fontsize=12,
+                     fontweight="bold", color=BRAND_PRIMARY)
+    else:
+        n_bins = min(max(10, len(overshoot_values) // 5), 30)
+        ax.hist(overshoot_values, bins=n_bins, color=BRAND_SECONDARY,
+                alpha=0.75, edgecolor=BRAND_PRIMARY, linewidth=0.5)
+        ax.set_xlabel("Overshoot Magnitude (kW)", fontsize=9)
+        ax.set_ylabel("Frequency", fontsize=9)
+        ax.set_title("Overshoot Distribution", fontsize=12,
+                     fontweight="bold", color=BRAND_PRIMARY)
+        ax.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 def generate_pdf_report(output_path: str,
                          stats_result: dict | None = None,
                          kpi_data: dict | None = None,
@@ -961,7 +1108,8 @@ def generate_pdf_report(output_path: str,
                          cost_simulation_data: dict | None = None,
                          sections: list | None = None,
                          report_title: str = "Spartacus Energy Analysis Report",
-                         data_overview: dict | None = None) -> str:
+                         data_overview: dict | None = None,
+                         feasibility_data: dict | None = None) -> str:
     """Generate branded PDF report using reportlab.
 
     Args:
@@ -980,7 +1128,8 @@ def generate_pdf_report(output_path: str,
     # Default: include everything (backward-compatible)
     if sections is None:
         sections = ["data_overview", "data_quality", "statistical",
-                     "peak_analysis", "battery", "cost_estimation"]
+                     "peak_analysis", "battery", "cost_estimation",
+                     "feasibility"]
     if stats_result is None:
         stats_result = {}
 
@@ -1572,6 +1721,163 @@ def generate_pdf_report(output_path: str,
                 comp_table,
             ]))
             story.append(Spacer(1, 6 * mm))
+
+    # --- Feasibility Analysis ---
+    if "feasibility" in sections and feasibility_data:
+        story.append(PageBreak())
+        story.append(_section_heading("Feasibility Analysis"))
+        story.append(Spacer(1, 4 * mm))
+
+        # Connection overview text
+        conn_text = (
+            f"Connection: {feasibility_data.get('connection_power_kw', 0):.0f} kW "
+            f"({feasibility_data.get('connection_size_category', 'N/A')}) | "
+            f"Subscribed: {feasibility_data.get('subscribed_power_kw', 0):.0f} kW | "
+            f"Peak: {feasibility_data.get('pmax_kw', 0):.1f} kW | "
+            f"Total: {feasibility_data.get('total_consumption_kwh', 0):,.0f} kWh"
+        )
+        story.append(Paragraph(conn_text, ParagraphStyle(
+            "feas_overview", fontSize=9, leading=12,
+            textColor=colors.HexColor("#333333"))))
+        story.append(Spacer(1, 4 * mm))
+
+        # Scorecard table with traffic light dots
+        _rl_green = colors.HexColor("#28A745")
+        _rl_orange = colors.HexColor("#FFC107")
+        _rl_red = colors.HexColor("#EC465D")
+        _rl_gray = colors.HexColor("#B4BCD6")
+
+        tl_colors_map = {
+            "green": _rl_green, "orange": _rl_orange,
+            "red": _rl_red, "gray": _rl_gray,
+        }
+
+        traffic_lights = feasibility_data.get("traffic_lights", {})
+
+        metric_display = [
+            ("grid_utilization_pct", "Grid Utilization",
+             f"{feasibility_data.get('grid_utilization_pct', 0):.1f}%"),
+            ("headroom_kw", "Headroom",
+             f"{feasibility_data.get('headroom_kw', 0):.1f} kW"),
+            ("overshoot_count", "Overshoot Count",
+             f"{feasibility_data.get('overshoot_count', 0)}"),
+            ("max_overshoot_kw", "Max Overshoot",
+             f"{feasibility_data.get('max_overshoot_kw', 0):.1f} kW"),
+            ("available_capacity_kw", "Available Capacity",
+             f"{feasibility_data.get('available_capacity_kw', 0):.0f} kW"),
+            ("load_factor_pct", "Load Factor",
+             f"{feasibility_data.get('load_factor_pct', 0):.1f}%"),
+            ("peak_concentration_pct", "Peak Concentration",
+             f"{feasibility_data.get('peak_concentration_pct', 0):.1f}%"),
+            ("self_consumption_rate_pct", "Self-Consumption Rate",
+             f"{feasibility_data.get('self_consumption_rate_pct', 0):.1f}%"),
+        ]
+
+        sc_rows = [["", "Metric", "Value"]]
+        for metric_key, label, formatted_val in metric_display:
+            tl_color_name = traffic_lights.get(metric_key, "gray")
+            tl_hex = tl_colors_map.get(tl_color_name, _rl_gray)
+            dot = Paragraph(
+                f'<font color="{tl_hex.hexval()}">\u25CF</font>',
+                ParagraphStyle("dot", fontSize=12, alignment=1))
+            sc_rows.append([dot, label, formatted_val])
+
+        sc_table = Table(sc_rows, colWidths=[30, 180, 150])
+        sc_style = [
+            ("BACKGROUND", (0, 0), (-1, 0), _RL_PRIMARY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ALIGN", (0, 0), (0, -1), "CENTER"),
+            ("ALIGN", (2, 0), (2, -1), "RIGHT"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]
+        for i in range(1, len(sc_rows)):
+            if i % 2 == 0:
+                sc_style.append(("BACKGROUND", (0, i), (-1, i), _RL_BG))
+        sc_table.setStyle(TableStyle(sc_style))
+        story.append(KeepTogether([
+            Paragraph("<b>Feasibility Scorecard</b>", ParagraphStyle(
+                "sc_title", fontSize=11, textColor=_RL_PRIMARY)),
+            Spacer(1, 3 * mm),
+            sc_table,
+        ]))
+        story.append(Spacer(1, 6 * mm))
+
+        # Offer relevance tables
+        relevance_colors = {
+            "High": _rl_green, "Medium": _rl_orange, "Low": _rl_gray,
+        }
+
+        for offer_key, offer_name in [("a", "Offer A: Grid Constraint / Leasing"),
+                                        ("b", "Offer B: Joint Valorisation / BaaS")]:
+            rel_level = feasibility_data.get(f"offer_{offer_key}_relevance", "Low")
+            rationale = feasibility_data.get(f"offer_{offer_key}_rationale", "")
+            header_color = relevance_colors.get(rel_level, _rl_gray)
+
+            offer_rows = [
+                [offer_name, f"Relevance: {rel_level}"],
+            ]
+            rationale_para = Paragraph(
+                rationale,
+                ParagraphStyle("rationale", fontSize=8, leading=10,
+                               textColor=colors.HexColor("#333333")))
+            offer_rows.append([rationale_para, ""])
+
+            offer_table = Table(offer_rows, colWidths=[240, 140])
+            offer_style = [
+                ("BACKGROUND", (0, 0), (-1, 0), header_color),
+                ("TEXTCOLOR", (0, 0), (-1, 0), _RL_WHITE),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("SPAN", (0, 1), (-1, 1)),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D5E0")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]
+            offer_table.setStyle(TableStyle(offer_style))
+            story.append(offer_table)
+            story.append(Spacer(1, 4 * mm))
+
+        # Recommendation
+        rec_text = feasibility_data.get("recommendation", "")
+        if rec_text:
+            story.append(Paragraph("<b>Recommendation</b>", ParagraphStyle(
+                "rec_title", fontSize=11, textColor=_RL_PRIMARY)))
+            story.append(Spacer(1, 3 * mm))
+            for para in rec_text.split("\n"):
+                para = para.strip()
+                if para:
+                    story.append(Paragraph(para, ParagraphStyle(
+                        "rec_body", fontSize=9, leading=12,
+                        textColor=colors.HexColor("#333333"),
+                        spaceAfter=4)))
+            story.append(Spacer(1, 4 * mm))
+
+        # Charts
+        feas_charts = feasibility_data.get("charts", {})
+        for chart_key, chart_title in [
+            ("load_duration", "Load Duration Curve"),
+            ("utilization", "Grid Utilization Profile"),
+            ("overshoot_hist", "Overshoot Distribution"),
+        ]:
+            chart_png = feas_charts.get(chart_key)
+            if chart_png:
+                chart_img = RLImage(io.BytesIO(chart_png),
+                                    width=170 * mm, height=75 * mm)
+                story.append(KeepTogether([
+                    Spacer(1, 2 * mm),
+                    chart_img,
+                    Spacer(1, 4 * mm),
+                ]))
 
     # --- Battery Dimensioning Analysis ---
     if "battery" in sections and battery_data:
