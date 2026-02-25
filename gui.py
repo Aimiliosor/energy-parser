@@ -3785,10 +3785,10 @@ class EnergyParserGUI:
 
             tk.Label(grid_frame, text="\u25CF", font=("Segoe UI", 14),
                      bg=COLORS["white"], fg=hex_color).grid(
-                         row=row_idx, column=0, padx=(0, 8), sticky="w")
+                         row=row_idx, column=0, padx=4, sticky="w")
             tk.Label(grid_frame, text=label, font=("Segoe UI", 9),
                      bg=COLORS["white"], fg=COLORS["text_dark"]).grid(
-                         row=row_idx, column=1, padx=(0, 20), sticky="w")
+                         row=row_idx, column=1, padx=10, sticky="w")
             tk.Label(grid_frame, text=value_str,
                      font=("Segoe UI", 9, "bold"),
                      bg=COLORS["white"], fg=hex_color).grid(
@@ -3835,8 +3835,8 @@ class EnergyParserGUI:
             tk.Label(box, text=rationale,
                      font=("Segoe UI", 8), bg=COLORS["white"],
                      fg=COLORS["text_dark"], wraplength=320,
-                     justify=tk.LEFT, padx=10, pady=(0, 8)).pack(
-                         anchor="w", fill=tk.X)
+                     justify=tk.LEFT, padx=10).pack(
+                         anchor="w", fill=tk.X, pady=(0, 8))
 
         # --- Recommendation ---
         rec_frame = tk.Frame(parent, bg=COLORS["white"], bd=1,
